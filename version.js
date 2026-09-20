@@ -1,4 +1,4 @@
-const LLM_QUICK_BENCH_VERSION = 9;
+const LLM_QUICK_BENCH_VERSION = 10;
 
 const appVersionElement = document.querySelector("#app-version");
 if (appVersionElement) {

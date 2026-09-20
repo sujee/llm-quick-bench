@@ -15,6 +15,9 @@
     <script src="speed-test1.js" defer></script>
     <script src="thinking-test1.js" defer></script>
     <script src="decode-test1.js" defer></script>
+    <script src="context-bench.js" defer></script>
+    <script src="needle-test1.js" defer></script>
+    <script src="prefill-test1.js" defer></script>
   </head>
   <body>
     <main class="shell">
@@ -86,6 +89,28 @@
           tabindex="-1"
         >
           Decode Test
+        </button>
+        <button
+          id="needle-test-tab"
+          class="tab-button"
+          type="button"
+          role="tab"
+          aria-selected="false"
+          aria-controls="needle-test-panel"
+          tabindex="-1"
+        >
+          Needle Test
+        </button>
+        <button
+          id="prefill-test-tab"
+          class="tab-button"
+          type="button"
+          role="tab"
+          aria-selected="false"
+          aria-controls="prefill-test-panel"
+          tabindex="-1"
+        >
+          Prefill Test
         </button>
       </nav>
 
@@ -766,6 +791,367 @@ Output nothing else. Do not include reasoning, explanations, labels, markdown, o
             </div>
           </div>
         </details>
+      </section>
+      </div>
+
+      <div
+        id="needle-test-panel"
+        class="tab-panel"
+        role="tabpanel"
+        aria-labelledby="needle-test-tab"
+        hidden
+      >
+      <section id="needle-benchmark" class="benchmark" aria-label="Needle Test benchmark">
+        <section class="methodology-overview" aria-labelledby="needle-methodology-heading">
+          <h3 id="needle-methodology-heading">What the Needle Test measures</h3>
+          <p>Long-context needle retrieval with the document sized at a fill percent of each model's advertised context window (default 90%): each question hides one access-code entry at one of the configured percent positions (default 5%, 25%, 50%, 75%, 90%), and the accuracy matrix shows how retrieval holds across the document - the "lost in the middle" curve. Models run one at a time, and a confirmation dialog totals the planned requests, input tokens, and estimated cost before anything is sent.</p>
+          <div class="methodology-metrics">
+            <div>
+              <strong>Accuracy by position</strong>
+              <span>One matrix column per needle position; the middle columns against the 5% and 90% columns expose position sensitivity.</span>
+            </div>
+            <div>
+              <strong>Effective input processing rate</strong>
+              <span>Input tokens ÷ TTFT p50 at each model's window-sized input: a fair digest-speed figure alongside the accuracy curve.</span>
+            </div>
+            <div>
+              <strong>Long-prompt TTFT</strong>
+              <span>Time to first token shown as p50 and p90; position does not change prompt length, so TTFT is comparable across positions.</span>
+            </div>
+          </div>
+        </section>
+
+        <form id="needle-form" class="benchmark-form">
+          <div class="field">
+            <label for="needle-fill">Context fill %</label>
+            <input id="needle-fill" type="number" min="10" max="100" value="90" required />
+            <p class="hint">Document size = this percent of each model's advertised context window. Models without window metadata are skipped entirely.</p>
+          </div>
+          <div class="field">
+            <label for="needle-positions">Needle positions (%)</label>
+            <input id="needle-positions" type="text" value="5,25,50,75,90" />
+            <p class="hint">Comma-separated percent offsets into the document. Invalid or empty input falls back to 5, 25, 50, 75, 90.</p>
+          </div>
+          <div class="field">
+            <label for="needle-runs">Number of runs per position</label>
+            <input id="needle-runs" type="number" min="1" max="20" value="3" required />
+            <p class="hint">Per model per position, after one excluded warm-up.</p>
+          </div>
+          <div class="field">
+            <label for="needle-timeout">Timeout / request (sec)</label>
+            <input id="needle-timeout" type="number" min="10" max="600" value="300" required />
+            <p class="hint">Long prompts prefill slowly; keep this generous.</p>
+          </div>
+          <div class="field prompt-field">
+            <label for="needle-prompt-preview">Prompt template</label>
+            <textarea id="needle-prompt-preview" rows="7" readonly>Each question builds a fresh log document sized to the configured share of the model's context window. Exactly one entry contains the access code for a sector; it sits at one of the configured percent positions of the document.
+
+The entire response must be exactly one line containing only the access code, exactly as it appears in the document entry.
+
+Output nothing else. Do not include reasoning, explanations, labels, markdown, or any text beyond the access code.</textarea>
+            <p class="hint">Preview only - the prompt itself is generated per question. A live sample appears under Testing methodology.</p>
+          </div>
+          <fieldset class="benchmark-options">
+            <legend>Request options</legend>
+            <div class="benchmark-toggle-control">
+              <label for="needle-require-server-tokens">
+                <input id="needle-require-server-tokens" type="checkbox" checked />
+                <span>Require server token counts</span>
+              </label>
+              <p class="hint">Fails a request when streaming usage is missing instead of estimating tokens.</p>
+            </div>
+            <div class="benchmark-toggle-control">
+              <label for="needle-log-console">
+                <input id="needle-log-console" type="checkbox" />
+                <span>Log requests and responses to the browser console</span>
+              </label>
+              <p class="hint">Logs the HTTP-style request (truncated for huge documents), exact SSE chunks, assembled output, and grading. The API key is always redacted.</p>
+            </div>
+          </fieldset>
+          <div class="run-actions">
+            <button id="needle-run-button" class="primary-button" type="submit" disabled>
+              <span>Run selected</span><span aria-hidden="true">→</span>
+            </button>
+            <button id="needle-cancel-button" class="secondary-button" type="button" hidden>Cancel</button>
+          </div>
+        </form>
+
+        <div id="needle-status" class="status" role="status" aria-live="polite"></div>
+
+        <div id="needle-results" class="benchmark-results">
+          <section class="context-matrix-section" aria-labelledby="needle-matrix-heading">
+            <div class="decode-matrix-head">
+              <h3 id="needle-matrix-heading">Needle accuracy by position</h3>
+              <div class="decode-matrix-head-actions">
+                <p class="metric-note">One row per model, one column per needle position. Skipped cells (—) mean the model has no advertised context window to size the document against.</p>
+                <div class="export-actions">
+                  <button id="export-needle-matrix-csv" class="secondary-button" type="button" disabled>Export CSV</button>
+                  <button id="export-needle-matrix-json" class="secondary-button" type="button" disabled>Export JSON</button>
+                </div>
+              </div>
+            </div>
+            <div id="needle-matrix" class="table-frame"></div>
+          </section>
+          <section class="decode-run-section" aria-labelledby="needle-run-heading">
+            <div class="decode-run-head">
+              <h3 id="needle-run-heading">Run results</h3>
+            </div>
+            <div class="result-toolbar">
+              <p class="metric-note">Higher accuracy and input tok/s are better · Effective input tok/s = input tokens ÷ TTFT p50 · One row per model × needle position · Warm-up excluded</p>
+              <div class="export-actions">
+                <span class="column-picker-cue">Select columns <span aria-hidden="true">→</span></span>
+                <details class="column-picker">
+                  <summary class="secondary-button" aria-label="Select visible columns">Columns</summary>
+                  <div class="column-menu">
+                    <p>Needle test results</p>
+                    <div id="needle-column-options" class="column-options"></div>
+                    <button id="show-all-needle-columns" class="column-reset" type="button">Show all</button>
+                  </div>
+                </details>
+                <button id="export-needle-csv" class="secondary-button" type="button">Export CSV</button>
+                <button id="export-needle-json" class="secondary-button" type="button">Export JSON</button>
+              </div>
+            </div>
+            <div class="table-frame">
+              <div id="needle-body"></div>
+            </div>
+            <div class="run-summary" aria-label="Total Needle Test usage and accuracy">
+              <div><span>Run time</span><strong id="summary-needle-time">-</strong></div>
+              <div><span>Best input rate</span><strong id="summary-needle-best">-</strong></div>
+              <div><span>Accuracy</span><strong id="summary-needle-accuracy">-</strong></div>
+              <div><span>Total tokens</span><strong id="summary-needle-total-tokens">-</strong></div>
+              <div><span>Estimated cost</span><strong id="summary-needle-cost">-</strong></div>
+              <div><span>Cost / correct</span><strong id="summary-needle-cost-per-correct">-</strong></div>
+            </div>
+            <p id="needle-usage-note" class="table-hint">Results will appear here after a Needle Test run.</p>
+          </section>
+        </div>
+
+        <details class="methodology-details" open>
+          <summary>Testing methodology</summary>
+          <div class="methodology">
+            <ul>
+              <li><strong>Prompt</strong> is generated per question from a deterministic seed: a fresh filler document of neutral log entries with exactly one access-code entry (the needle), so the model never sees the same document twice within a run.</li>
+              <li><strong>Documents fill a share of each model's context window</strong> (default 90%, from the Context fill % field), so every model is stressed at its own limit and models with larger windows get proportionally longer documents. Models without context-window metadata are skipped entirely - there is nothing to size against - and show as Skipped / —.</li>
+              <li><strong>Needle positions are the comma-separated percents</strong> (default 5, 25, 50, 75, 90). Placement is <code>round((lines − 1) × percent / 100)</code>, so 5% lands near the top and 90% near the bottom. The results table shows one row per model × needle position, and the Needle position column reports both the percent and the needle's approximate token depth into the document (~N tokens in). The matrix pivots accuracy into one row per model with one column per position. Task instructions stay fixed at the top and bottom of the prompt, so only the needle moves.</li>
+              <li><strong>Status tracks each row live</strong>: Warming up, Running x/y while the combination's runs stream (the run in flight counts, so a row reads Running 1/3 as soon as its first run starts), Waiting while other positions run, then Completed x/y. Skipped x/y marks combinations that cannot run (a model without window metadata), Partial x/y / Failed x/y appear when requests fail, and Cancelled if you stop the run. The count is measured runs after the excluded warm-up. While a request's prompt is still uploading, that row's Status cell also shows a thin <strong>input progress bar</strong> (Input x%) - the request body is streamed in known-size chunks, so the bar tracks how much of the input has been sent; it disappears once the endpoint has accepted the request.</li>
+              <li><strong>Test time is a per-row column</strong>: the wall-clock time for that combination's measured runs (warm-up excluded). It ticks live from the row's first measured run, then freezes when the row completes; skipped and not-yet-started rows show "-".</li>
+              <li><strong>A styled confirmation dialog precedes every run</strong>: because documents fill most of each model's context window, one click can send millions of tokens. The dialog lists the planned requests and input tokens per model (warm-up included) with the estimated input cost from each model's pricing metadata, plus a highlighted totals block - and nothing is sent until you press <em>Run test</em>. Escape, Cancel, or clicking the backdrop backs out without a request. Output and reasoning tokens are not included in the estimate.</li>
+              <li><strong>Filler is neutral</strong>: no filler line mentions codes or sectors, and the needle is the only code-shaped string in the document, so retrieval cannot be shortcut by pattern-spotting.</li>
+              <li><strong>Grading</strong> requires the model's entire final content to be exactly one access-code line (reasoning deltas are ignored and surrounding whitespace is tolerated). The code must match the document entry case-insensitively. Failed requests count as incorrect and non-compliant, and count against their position.</li>
+              <li><strong>TTFT</strong> measures long-prompt prefill (request dispatch to the first generated token), shown as p50 (the typical run) and p90 (the tail - with few runs, nearest-rank p90 is simply the slowest run). Position does not change prompt length, so TTFT is comparable across positions.</li>
+              <li><strong>Effective input processing rate</strong> = p50 input tokens ÷ p50 TTFT per row. It includes network and queueing overhead - hence "effective" - and prefill must complete before any token, so the rate is a fair digest-speed figure. Higher is better.</li>
+              <li><strong>Thinking is left at each model's default behavior</strong>; the test sends no <code>chat_template_kwargs</code>, so thinking models reason while retrieving and the reasoning-token columns show what that costs.</li>
+              <li><strong>Reasoning tokens</strong> are estimated from the <code>reasoning_content</code> / <code>reasoning</code> SSE deltas and shown alongside answer tokens. The split is estimated - the server only provides the total.</li>
+              <li><strong>Cost per correct answer</strong> = total cost ÷ correct runs. A model with high accuracy and low cost ranks first. Models with zero correct runs show "-".</li>
+              <li>One warm-up question runs per model. It is excluded from accuracy, latency, and token summaries but included in test time, token usage, and cost.</li>
+              <li><strong>Models run one at a time</strong>, never in parallel: a window-sized prefill is never contended by another model's traffic, so TTFT and the effective input rate stay comparable across models. Total run time is wall-clock time.</li>
+              <li class="methodology-request-item">
+                <details class="methodology-request">
+                  <summary>Benchmark request</summary>
+                  <p class="sample-request-note">Live request template based on the current settings, shown against an illustrative 128K window with the document truncated for readability; each model receives its own window-sized document when the test runs. The API key is always redacted.</p>
+                  <pre class="sample-request"><code id="needle-request-template-code"></code></pre>
+                </details>
+              </li>
+              <li class="methodology-sample-item">
+                <details class="sample-exchange">
+                  <summary>Sample request</summary>
+                  <p id="needle-sample-request-note" class="sample-request-note">Captured from a completed measured run. Long documents are truncated head + tail and the API key is redacted.</p>
+                  <pre class="sample-request"><code id="needle-sample-request-code"></code></pre>
+                </details>
+              </li>
+            </ul>
+            <div class="sample-exchanges">
+              <details class="sample-exchange">
+                <summary>Sample streaming response</summary>
+                <p id="needle-sample-response-note" class="sample-request-note">Raw response headers and every decoded network chunk from the same measured run. Chunk labels are added by the benchmark.</p>
+                <pre class="sample-request"><code id="needle-sample-response-code"></code></pre>
+              </details>
+              <details class="sample-exchange">
+                <summary>Sample consolidated response</summary>
+                <p id="needle-sample-output-note" class="sample-request-note">All generated deltas from the same measured run, split into reasoning and final content, plus the grading verdict.</p>
+                <pre class="sample-request"><code id="needle-sample-output-code"></code></pre>
+              </details>
+            </div>
+          </div>
+        </details>
+
+      </section>
+      </div>
+
+      <div
+        id="prefill-test-panel"
+        class="tab-panel"
+        role="tabpanel"
+        aria-labelledby="prefill-test-tab"
+        hidden
+      >
+      <section id="prefill-benchmark" class="benchmark" aria-label="Prefill Test benchmark">
+        <section class="methodology-overview" aria-labelledby="prefill-methodology-heading">
+          <h3 id="prefill-methodology-heading">What the Prefill Test measures</h3>
+          <p>Long-prompt prefill speed across input sizes (default 10K, 50K, 100K, 250K, 500K, 1M tokens): each question hides one access-code entry near the end of the document (default 90%) and the effective input rate shows how fast the endpoint digests each size.</p>
+          <div class="methodology-metrics">
+            <div>
+              <strong>Effective input processing rate</strong>
+              <span>Input tokens ÷ TTFT p50 per size - the headline: watch how the rate holds (or collapses) as inputs grow.</span>
+            </div>
+            <div>
+              <strong>TTFT p50 / p90</strong>
+              <span>Time to first token per input size, typical and tail; p90 is simply the slowest run with few runs.</span>
+            </div>
+            <div>
+              <strong>Retrieval accuracy</strong>
+              <span>The needle is always present, so accuracy per size shows whether the model still finds it at 1M tokens.</span>
+            </div>
+          </div>
+        </section>
+
+        <form id="prefill-form" class="benchmark-form">
+          <div class="field">
+            <label for="prefill-sizes">Input sizes (tokens)</label>
+            <input id="prefill-sizes" type="text" value="10000,50000,100000,250000,500000,1000000" />
+            <p class="hint">Comma-separated document sizes; every size is tested for each model. Invalid or empty input falls back to 10K, 50K, 100K, 250K, 500K, 1M.</p>
+          </div>
+          <div class="field">
+            <label for="prefill-position">Needle position (%)</label>
+            <input id="prefill-position" type="number" min="0" max="100" value="90" required />
+            <p class="hint">Fixed percent offset into the document; 90-95% keeps the needle near the end.</p>
+          </div>
+          <div class="field">
+            <label for="prefill-runs">Number of runs per size</label>
+            <input id="prefill-runs" type="number" min="1" max="20" value="1" required />
+            <p class="hint">Per model per input size, after one excluded warm-up.</p>
+          </div>
+          <div class="field">
+            <label for="prefill-concurrency">Parallel models to test</label>
+            <input id="prefill-concurrency" type="number" min="1" max="12" value="3" required />
+            <p class="hint">Sizes for one model stay serial, smallest first.</p>
+          </div>
+          <div class="field">
+            <label for="prefill-timeout">Timeout / request (sec)</label>
+            <input id="prefill-timeout" type="number" min="10" max="600" value="300" required />
+            <p class="hint">Mega-token prompts prefill slowly; keep this generous.</p>
+          </div>
+          <div class="field prompt-field">
+            <label for="prefill-prompt-preview">Prompt template</label>
+            <textarea id="prefill-prompt-preview" rows="7" readonly>Each question builds a fresh log document at one of the configured input sizes. Exactly one entry contains the access code for a sector; it sits at the configured percent position near the end of the document.
+
+The entire response must be exactly one line containing only the access code, exactly as it appears in the document entry.
+
+Output nothing else. Do not include reasoning, explanations, labels, markdown, or any text beyond the access code.</textarea>
+            <p class="hint">Preview only - the prompt itself is generated per question. A live sample appears under Testing methodology.</p>
+          </div>
+          <fieldset class="benchmark-options">
+            <legend>Request options</legend>
+            <div class="benchmark-toggle-control">
+              <label for="prefill-require-server-tokens">
+                <input id="prefill-require-server-tokens" type="checkbox" checked />
+                <span>Require server token counts</span>
+              </label>
+              <p class="hint">Fails a request when streaming usage is missing instead of estimating tokens.</p>
+            </div>
+            <div class="benchmark-toggle-control">
+              <label for="prefill-log-console">
+                <input id="prefill-log-console" type="checkbox" />
+                <span>Log requests and responses to the browser console</span>
+              </label>
+              <p class="hint">Logs the HTTP-style request (truncated for huge documents), exact SSE chunks, assembled output, and grading. The API key is always redacted.</p>
+            </div>
+          </fieldset>
+          <div class="run-actions">
+            <button id="prefill-run-button" class="primary-button" type="submit" disabled>
+              <span>Run selected</span><span aria-hidden="true">→</span>
+            </button>
+            <button id="prefill-cancel-button" class="secondary-button" type="button" hidden>Cancel</button>
+          </div>
+        </form>
+
+        <div id="prefill-status" class="status" role="status" aria-live="polite"></div>
+
+        <div id="prefill-results" class="benchmark-results">
+          <section class="decode-run-section" aria-labelledby="prefill-run-heading">
+            <div class="decode-run-head">
+              <h3 id="prefill-run-heading">Run results</h3>
+            </div>
+            <div class="result-toolbar">
+              <p class="metric-note">Higher input tok/s is better · Effective input tok/s = input tokens ÷ TTFT p50 · One row per model × input size · Warm-up excluded</p>
+              <div class="export-actions">
+                <span class="column-picker-cue">Select columns <span aria-hidden="true">→</span></span>
+                <details class="column-picker">
+                  <summary class="secondary-button" aria-label="Select visible columns">Columns</summary>
+                  <div class="column-menu">
+                    <p>Prefill test results</p>
+                    <div id="prefill-column-options" class="column-options"></div>
+                    <button id="show-all-prefill-columns" class="column-reset" type="button">Show all</button>
+                  </div>
+                </details>
+                <button id="export-prefill-csv" class="secondary-button" type="button">Export CSV</button>
+                <button id="export-prefill-json" class="secondary-button" type="button">Export JSON</button>
+              </div>
+            </div>
+            <div class="table-frame">
+              <div id="prefill-body"></div>
+            </div>
+            <div class="run-summary" aria-label="Total Prefill Test usage and speed">
+              <div><span>Run time</span><strong id="summary-prefill-time">-</strong></div>
+              <div><span>Best input rate</span><strong id="summary-prefill-best">-</strong></div>
+              <div><span>Accuracy</span><strong id="summary-prefill-accuracy">-</strong></div>
+              <div><span>Total tokens</span><strong id="summary-prefill-total-tokens">-</strong></div>
+              <div><span>Estimated cost</span><strong id="summary-prefill-cost">-</strong></div>
+              <div><span>Cost / correct</span><strong id="summary-prefill-cost-per-correct">-</strong></div>
+            </div>
+            <p id="prefill-usage-note" class="table-hint">Results will appear here after a Prefill Test run.</p>
+          </section>
+        </div>
+
+        <details class="methodology-details" open>
+          <summary>Testing methodology</summary>
+          <div class="methodology">
+            <ul>
+              <li><strong>Prompt</strong> is generated per question from a deterministic seed: a fresh filler document of neutral log entries with exactly one access-code entry (the needle), so the model never sees the same document twice within a run.</li>
+              <li><strong>Input sizes are the comma-separated token counts</strong> (default 10K, 50K, 100K, 250K, 500K, 1M), tested smallest first. Sizes are directly comparable across models. Combinations whose size exceeds a model's advertised context window are skipped without sending a request and show as Skipped / —; models without window metadata are always sent.</li>
+              <li><strong>The needle position is fixed</strong> (default 90%) so the only variable is the input size. Placement is <code>round((lines − 1) × percent / 100)</code>, near the end of the document. The results table shows one row per model × input size, with the Needle position column reporting the percent and the needle's approximate token depth (~N tokens in). Task instructions stay fixed at the top and bottom of the prompt, so only the size moves.</li>
+              <li><strong>Status tracks each row live</strong>: Warming up, Running x/y while the size's runs stream (the run in flight counts, so a row reads Running 1/3 as soon as its first run starts), Waiting while other sizes run, then Completed x/y. Skipped x/y marks sizes that exceed a model's advertised context window, Partial x/y / Failed x/y appear when requests fail, and Cancelled if you stop the run. The count is measured runs after the excluded warm-up. While a request's prompt is still uploading, that row's Status cell also shows a thin <strong>input progress bar</strong> (Input x%) - the request body is streamed in known-size chunks, so the bar tracks how much of the input has been sent; it disappears once the endpoint has accepted the request.</li>
+              <li><strong>Test time is a per-row column</strong>: the wall-clock time for that size's measured runs (warm-up excluded). It ticks live from the row's first measured run, then freezes when the row completes; skipped and not-yet-started rows show "-".</li>
+              <li><strong>Filler is neutral</strong>: no filler line mentions codes or sectors, and the needle is the only code-shaped string in the document, so retrieval cannot be shortcut by pattern-spotting.</li>
+              <li><strong>Grading</strong> requires the model's entire final content to be exactly one access-code line (reasoning deltas are ignored and surrounding whitespace is tolerated). The code must match the document entry case-insensitively. Failed requests count as incorrect and non-compliant, and count against their size.</li>
+              <li><strong>TTFT</strong> measures long-prompt prefill (request dispatch to the first generated token) at each input size, shown as p50 (the typical run) and p90 (the tail - with few runs, nearest-rank p90 is simply the slowest run).</li>
+              <li><strong>Effective input processing rate</strong> = p50 input tokens ÷ p50 TTFT per size row - the headline metric. It includes network and queueing overhead - hence "effective" - and prefill must complete before any token, so the rate is a fair digest-speed figure. Higher is better, and the curve across sizes shows whether the endpoint keeps up as prompts grow.</li>
+              <li><strong>Thinking is left at each model's default behavior</strong>; the test sends no <code>chat_template_kwargs</code>, so thinking models reason while retrieving and the reasoning-token columns show what that costs.</li>
+              <li><strong>Reasoning tokens</strong> are estimated from the <code>reasoning_content</code> / <code>reasoning</code> SSE deltas and shown alongside answer tokens. The split is estimated - the server only provides the total.</li>
+              <li><strong>Cost per correct answer</strong> = total cost ÷ correct runs. A model with high accuracy and low cost ranks first. Models with zero correct runs show "-".</li>
+              <li>One warm-up question runs per model (the smallest size). It is excluded from accuracy, latency, and token summaries but included in test time, token usage, and cost.</li>
+              <li>Total run time is wall-clock time; parallel model times are not summed.</li>
+              <li class="methodology-request-item">
+                <details class="methodology-request">
+                  <summary>Benchmark request</summary>
+                  <p class="sample-request-note">Live request template based on the current settings, shown for the smallest input size with the document truncated for readability; the selected model receives every size when the test runs. The API key is always redacted.</p>
+                  <pre class="sample-request"><code id="prefill-request-template-code"></code></pre>
+                </details>
+              </li>
+              <li class="methodology-sample-item">
+                <details class="sample-exchange">
+                  <summary>Sample request</summary>
+                  <p id="prefill-sample-request-note" class="sample-request-note">Captured from a completed measured run. Long documents are truncated head + tail and the API key is redacted.</p>
+                  <pre class="sample-request"><code id="prefill-sample-request-code"></code></pre>
+                </details>
+              </li>
+            </ul>
+            <div class="sample-exchanges">
+              <details class="sample-exchange">
+                <summary>Sample streaming response</summary>
+                <p id="prefill-sample-response-note" class="sample-request-note">Raw response headers and every decoded network chunk from the same measured run. Chunk labels are added by the benchmark.</p>
+                <pre class="sample-request"><code id="prefill-sample-response-code"></code></pre>
+              </details>
+              <details class="sample-exchange">
+                <summary>Sample consolidated response</summary>
+                <p id="prefill-sample-output-note" class="sample-request-note">All generated deltas from the same measured run, split into reasoning and final content, plus the grading verdict.</p>
+                <pre class="sample-request"><code id="prefill-sample-output-code"></code></pre>
+              </details>
+            </div>
+          </div>
+        </details>
+
       </section>
       </div>
     </main>

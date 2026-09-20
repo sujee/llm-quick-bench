@@ -396,8 +396,527 @@ function summarizeRunThinkingAccuracy(results) {
   }, { correct: 0, compliant: 0, total: 0, successful: 0, failed: 0 });
 }
 
+// --- Long-context test helpers (Needle Test / Prefill Test) ---
+//
+// Both long-context tests build, from a deterministic seed, a log-style
+// filler document at a configurable absolute input size, hide exactly one
+// access-code entry (the needle) at a configurable percent position, and ask
+// the model to report the code:
+//
+//   Needle Test  - document sized at a fill percent of each model's
+//                  advertised context window (default 90%), needle at
+//                  varying positions: the "lost in the middle" accuracy
+//                  curve. Models without window metadata are skipped.
+//   Prefill Test - varying input sizes (10K-1M), needle pinned near the end:
+//                  the prefill curve, headlined by the effective input
+//                  processing rate = p50 input tokens / p50 TTFT.
+//
+// Every model runs every configured size x position combination, one results
+// row per combination. Combinations whose size exceeds a model's advertised
+// context window are skipped before any request is sent.
+
+const CONTEXT_SECTORS = [
+  "blue", "amber", "cobalt", "verdant", "indigo", "rose", "slate", "topaz",
+];
+// Unambiguous alphanumerics only, so a recovered code is never a misread O/0 or I/1.
+const CONTEXT_CODE_CHARSET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
+const CONTEXT_MIN_DOCUMENT_TOKENS = 256;
+// Neutral filler templates. None of them may mention codes or sectors or
+// contain code-shaped strings - the needle is the only such line in the document.
+const CONTEXT_FILLER_TEMPLATES = [
+  (r, n) => `Entry ${n}: routine telemetry sweep on module ${1 + Math.floor(r() * 48)} completed; all readings within normal range.`,
+  (r, n) => `Entry ${n}: cache warm-up for shard ${1 + Math.floor(r() * 32)} finished in ${40 + Math.floor(r() * 900)} ms with no errors reported.`,
+  (r, n) => `Entry ${n}: scheduled checkpoint archived to cold storage; checksum verified.`,
+  (r, n) => `Entry ${n}: background compaction merged ${1 + Math.floor(r() * 2400)} records on storage node ${1 + Math.floor(r() * 16)} without warnings.`,
+  (r, n) => `Entry ${n}: queue depth settled at ${Math.floor(r() * 900)} items; consumer lag remains inside the green band.`,
+  (r, n) => `Entry ${n}: index rebuild on replica ${1 + Math.floor(r() * 8)} completed; latency profile nominal.`,
+  (r, n) => `Entry ${n}: disk usage on volume ${1 + Math.floor(r() * 12)} returned to ${30 + Math.floor(r() * 40)} percent after cleanup.`,
+  (r, n) => `Entry ${n}: health probe round ${1 + Math.floor(r() * 4000)} passed across ${2 + Math.floor(r() * 30)} upstream targets.`,
+  (r, n) => `Entry ${n}: configuration snapshot ${100 + Math.floor(r() * 800)} applied to the staging fleet.`,
+  (r, n) => `Entry ${n}: throughput sample recorded at ${50 + Math.floor(r() * 4000)} requests per second over a five-minute window.`,
+];
+
+function createSeededRandom(seed) {
+  let state = seed >>> 0;
+  return () => {
+    state = (state + 0x6D2B79F5) >>> 0;
+    let value = state;
+    value = Math.imul(value ^ (value >>> 15), value | 1);
+    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+// Parses the comma-separated needle-position percents field into an ascending,
+// deduplicated list of integers. Blank and non-numeric entries are skipped;
+// each remaining value is clamped to [minPercent, maxPercent] like
+// clampInteger. Returns an empty array when nothing valid remains so callers
+// can apply their own fallback (the benchmark defaults to 5, 25, 50, 75, 90).
+function parseContextPositionPercentOptions(raw, { minPercent = 0, maxPercent = 100 } = {}) {
+  const percents = [];
+  String(raw ?? "").split(",").forEach((part) => {
+    const trimmed = part.trim();
+    if (trimmed === "") return;
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed)) return;
+    const percent = Math.min(maxPercent, Math.max(minPercent, Math.round(parsed)));
+    if (!percents.includes(percent)) percents.push(percent);
+  });
+  return percents.sort((a, b) => a - b);
+}
+
+// Parses the comma-separated input-size field into an ascending, deduplicated
+// list of token counts. Blank and non-numeric entries are skipped; each
+// remaining value is clamped to [minTokens, maxTokens]. Returns an empty
+// array when nothing valid remains so callers can apply their own fallback
+// (the benchmark defaults to 10K, 100K, 250K, 500K, 750K, 1M).
+function parseContextInputTokenOptions(raw, { minTokens = 1024, maxTokens = 10485760 } = {}) {
+  const sizes = [];
+  String(raw ?? "").split(",").forEach((part) => {
+    const trimmed = part.trim();
+    if (trimmed === "") return;
+    const parsed = Number(trimmed);
+    if (!Number.isFinite(parsed)) return;
+    const size = Math.min(maxTokens, Math.max(minTokens, Math.round(parsed)));
+    if (!sizes.includes(size)) sizes.push(size);
+  });
+  return sizes.sort((a, b) => a - b);
+}
+
+// Maps a 0-based measured run index to its size x position combination.
+// Combos are ordered size-major (for each input size, every position), so the
+// matrix fills one size row at a time. Warm-ups (index -1) use the first
+// combo; out-of-range groups fall back to the first combo. Mirrors the Decode
+// Test's output-length grouping.
+function contextComboForRun(runIndex, inputTokenSizes, positionPercents, runsPerCombo) {
+  const group = runIndex >= 0 ? Math.floor(runIndex / runsPerCombo) : 0;
+  const comboCount = inputTokenSizes.length * positionPercents.length;
+  if (group < 0 || group >= comboCount) {
+    return { inputTokens: inputTokenSizes[0], positionPercent: positionPercents[0] };
+  }
+  const sizeIndex = Math.floor(group / positionPercents.length);
+  const positionIndex = group % positionPercents.length;
+  return {
+    inputTokens: inputTokenSizes[sizeIndex],
+    positionPercent: positionPercents[positionIndex],
+  };
+}
+
+// 0-based filler-line index for the needle at `positionPercent` percent of the
+// document: round((lineCount - 1) * percent / 100), clamped into the document.
+// 5% lands near the top, 50% at the middle line, 90% near the bottom.
+function contextNeedleLineIndex(positionPercent, lineCount) {
+  const count = Math.max(1, Math.floor(lineCount));
+  const percent = Number.isFinite(positionPercent)
+    ? Math.min(100, Math.max(0, positionPercent))
+    : 50;
+  return Math.max(0, Math.min(count - 1, Math.round((count - 1) * percent / 100)));
+}
+
+// Approximate token depth of the needle inside an `inputTokens`-token
+// document: documents are built from uniform filler lines, so the needle sits
+// about `positionPercent` of the way in, mirroring the line-index placement
+// math above. Null when there is no document (an unsizable model).
+function contextNeedleTokenDepth(inputTokens, positionPercent) {
+  if (!Number.isFinite(inputTokens) || inputTokens <= 0) return null;
+  const percent = Number.isFinite(positionPercent)
+    ? Math.min(100, Math.max(0, positionPercent))
+    : 50;
+  return Math.round((inputTokens * percent) / 100);
+}
+
+// Effective input processing rate: server-reported prompt tokens divided by
+// TTFT (request dispatch to the first generated token). Prefill must finish
+// before any token appears, so this measures how fast the endpoint digests a
+// long prompt, network and queueing overhead included - hence "effective".
+// Null when either input is missing or non-positive.
+function calculateEffectiveInputTokensPerSecond(promptTokens, ttftMs) {
+  if (!Number.isFinite(promptTokens) || promptTokens <= 0) return null;
+  if (!Number.isFinite(ttftMs) || ttftMs <= 0) return null;
+  return promptTokens / (ttftMs / 1000);
+}
+
+// Prefill Test sizing: the document targets an absolute token count from the
+// configured input-size list, floored at the minimum document size so tiny
+// inputs stay non-degenerate.
+function contextDocumentTokensForSize(inputTokens) {
+  const requested = Number.isFinite(inputTokens) ? Math.max(0, Math.round(inputTokens)) : 0;
+  return Math.max(CONTEXT_MIN_DOCUMENT_TOKENS, requested);
+}
+
+// Needle Test sizing: the document fills `fillPercent` of a model's
+// advertised context window (floored at the minimum document size). Null
+// when the model has no usable window metadata - the caller skips such
+// models entirely because there is nothing to size against.
+function contextInputTokensForWindow(contextWindowTokens, fillPercent) {
+  const hasWindow = Number.isFinite(contextWindowTokens) && contextWindowTokens > 0;
+  if (!hasWindow) return null;
+  const fill = Number.isFinite(fillPercent)
+    ? Math.min(100, Math.max(0, fillPercent))
+    : 90;
+  return Math.max(CONTEXT_MIN_DOCUMENT_TOKENS, Math.floor((contextWindowTokens * fill) / 100));
+}
+
+// Planned usage for a run-confirmation warning: how many requests a model
+// will actually send and how many input tokens they carry. Combinations that
+// cannot run (an unsizable model, or sizes above its advertised window)
+// contribute nothing; the warm-up uses the first runnable size, so it counts
+// only when at least one combination can run.
+function summarizeContextPlannedUsage({ inputTokenSizes, positionCount, runsPerCombo, contextWindowTokens }) {
+  const sizes = Array.isArray(inputTokenSizes) ? inputTokenSizes : [];
+  const positions = Number.isFinite(positionCount) ? Math.max(0, Math.floor(positionCount)) : 0;
+  const runsPer = Number.isFinite(runsPerCombo) ? Math.max(0, Math.floor(runsPerCombo)) : 0;
+  const hasWindow = Number.isFinite(contextWindowTokens) && contextWindowTokens > 0;
+  const runnable = sizes.filter((size) => Number.isFinite(size) && size > 0
+    && (!hasWindow || size <= contextWindowTokens));
+  if (runnable.length === 0) return { requests: 0, inputTokens: 0 };
+  const measuredTokens = runnable.reduce(
+    (total, size) => total + size * positions * runsPer,
+    0,
+  );
+  // Warm-up: one extra request at the first runnable size.
+  return {
+    requests: 1 + runnable.length * positions * runsPer,
+    inputTokens: measuredTokens + runnable[0],
+  };
+}
+
+function generateContextFillerLine(random, entryNumber) {
+  const template = CONTEXT_FILLER_TEMPLATES[Math.floor(random() * CONTEXT_FILLER_TEMPLATES.length)];
+  return template(random, entryNumber);
+}
+
+function generateContextCode(random) {
+  const group = () => Array.from(
+    { length: 4 },
+    () => CONTEXT_CODE_CHARSET[Math.floor(random() * CONTEXT_CODE_CHARSET.length)],
+  ).join("");
+  return `${group()}-${group()}-${group()}`;
+}
+
+// Grows neutral filler lines until the chars/4 token estimate reaches the
+// target (at least 8 lines so the document is never degenerate), then
+// replaces the line at the needle index with the access-code entry. Length is
+// tracked incrementally (a running character total) instead of re-joining the
+// document per line, which keeps generation linear for near-window-sized
+// documents; the +64-character pad covers the shrink from swapping a filler
+// line for the shorter needle line.
+function buildContextDocument({ random, sector, code, positionPercent, targetDocumentTokens }) {
+  const lines = [];
+  let totalCharacters = 0;
+  const targetCharacters = targetDocumentTokens * 4;
+  let entryNumber = 1;
+  while (lines.length < 8 || totalCharacters < targetCharacters + 64) {
+    const line = generateContextFillerLine(random, entryNumber);
+    lines.push(line);
+    totalCharacters += line.length + 1;
+    entryNumber += 1;
+  }
+  const needleIndex = contextNeedleLineIndex(positionPercent, lines.length);
+  lines[needleIndex] = `Entry ${needleIndex + 1}: access code for sector ${sector} is ${code}.`;
+  return { lines, needleIndex, estimatedTokens: estimateTokenCount(lines.join("\n")) };
+}
+
+function renderContextPrompt(lines, sector) {
+  return [
+    `The log document below contains many entries. Exactly one entry contains the access code for the ${sector} sector. Read the document and report that access code.`,
+    "",
+    "--- DOCUMENT START ---",
+    ...lines,
+    "--- DOCUMENT END ---",
+    "",
+    `Report the access code for the ${sector} sector.`,
+    "",
+    "Your entire response must be exactly one line containing only the access code, exactly as it appears in the document entry.",
+    "Output nothing else. Do not include reasoning, explanations, labels, markdown, or any text beyond the access code.",
+  ].join("\n");
+}
+
+function generateContextTask(runSeed, runIndex, inputTokens, positionPercent) {
+  const baseSeed = (runSeed >>> 0);
+  const taskSeed = (baseSeed + runIndex * 2654435761) >>> 0;
+  const targetDocumentTokens = contextDocumentTokensForSize(inputTokens);
+  const random = createSeededRandom(taskSeed);
+  const sector = CONTEXT_SECTORS[Math.floor(random() * CONTEXT_SECTORS.length)];
+  const code = generateContextCode(random);
+  const document = buildContextDocument({
+    random,
+    sector,
+    code,
+    positionPercent,
+    targetDocumentTokens,
+  });
+  return {
+    seed: taskSeed,
+    runIndex,
+    inputTokens,
+    positionPercent,
+    sector,
+    code,
+    targetDocumentTokens,
+    estimatedDocumentTokens: document.estimatedTokens,
+    documentLineCount: document.lines.length,
+    needleLineIndex: document.needleIndex,
+    prompt: renderContextPrompt(document.lines, sector),
+    expected: { sector, code },
+  };
+}
+
+function extractContextAnswer(contentText) {
+  if (!contentText) return { ok: false, raw: null };
+  // The prompt requires the entire response to contain only the access code.
+  // Trim surrounding whitespace for transport/model cosmetics, but reject any
+  // explanation, label, markdown, or additional non-empty line.
+  const raw = contentText.trim();
+  const match = raw.match(/^([A-Za-z0-9]{4}-[A-Za-z0-9]{4}-[A-Za-z0-9]{4})$/);
+  if (!match) return { ok: false, raw };
+  return { ok: true, raw, code: match[1] };
+}
+
+function gradeContextAnswer(extracted, expected) {
+  if (!extracted?.ok) return false;
+  return extracted.code.toUpperCase() === String(expected?.code ?? "").toUpperCase();
+}
+
+// Overall accuracy for one model's result. Failed measured requests count as
+// incorrect and non-compliant, mirroring Thinking Test 1's rule; skipped
+// combinations (input size exceeds the model's window) are not attempts.
+function summarizeContextAccuracy(result) {
+  const runs = (Array.isArray(result?.runs) ? result.runs : []).filter((run) => !run?.skipped);
+  const measuredFailures = Array.isArray(result?.errors)
+    ? result.errors.filter((error) => Number.isInteger(error?.run) && error.run > 0).length
+    : 0;
+  const total = runs.length + measuredFailures;
+  const correct = runs.filter((run) => run.correct).length;
+  const compliant = runs.filter((run) => run.formatCompliant).length;
+  return {
+    correct,
+    compliant,
+    total,
+    successful: runs.length,
+    failed: measuredFailures,
+    accuracy: total > 0 ? correct / total : null,
+    formatCompliance: total > 0 ? compliant / total : null,
+  };
+}
+
+function summarizeRunContextAccuracy(results) {
+  return results.reduce((total, result) => {
+    const accuracy = summarizeContextAccuracy(result);
+    total.correct += accuracy.correct;
+    total.compliant += accuracy.compliant;
+    total.total += accuracy.total;
+    total.successful += accuracy.successful;
+    total.failed += accuracy.failed;
+    return total;
+  }, { correct: 0, compliant: 0, total: 0, successful: 0, failed: 0 });
+}
+
+// Placeholder measurement for combinations skipped without a request:
+// either the input size exceeds the model's advertised context window
+// (Prefill Test) or the model has no window metadata to size against
+// (Needle Test). Skipped runs never hit the endpoint, never count as
+// accuracy attempts, and render as "Skipped".
+function buildSkippedContextMeasurement({
+  inputTokens,
+  positionPercent,
+  skipReason = "input size exceeds the model's advertised context window",
+}) {
+  return {
+    skipped: true,
+    skipReason,
+    inputTokens,
+    positionPercent,
+    correct: false,
+    formatCompliant: false,
+  };
+}
+
+// Aggregates one combination's runs (same model + input size + needle
+// position): TTFT as both p50 (the typical run) and p90 (the tail - with few
+// runs, nearest-rank p90 is simply the slowest run), and the effective input
+// processing rate computed from the aggregates as p50 input tokens ÷ p50 TTFT
+// (higher is better). Skipped runs are reported separately and never count as
+// attempts; failed runs (bucketed by the caller from run numbers) count as
+// incorrect.
+function summarizeContextPositionRuns(runs, failedRuns = 0) {
+  const activeRuns = runs.filter((run) => !run?.skipped);
+  const values = (key) => activeRuns.map((run) => run[key]).filter(Number.isFinite);
+  const total = activeRuns.length + failedRuns;
+  const correct = activeRuns.filter((run) => run.correct).length;
+  const compliant = activeRuns.filter((run) => run.formatCompliant).length;
+  const ttftP50 = percentile(values("ttftMs"), 0.5);
+  const promptTokensP50 = percentile(values("promptTokens"), 0.5);
+  // Wall-clock test time for the combination: from its first measured run's
+  // start to its last recorded run's end (testTimeStartMs/testTimeEndMs are
+  // stamped around each measurement by the engine). The engine adds the
+  // live in-flight time while the row runs. Null when nothing ran.
+  const timedRuns = activeRuns.filter(
+    (run) => Number.isFinite(run.testTimeStartMs) && Number.isFinite(run.testTimeEndMs),
+  );
+  const testTimeStartedAtMs = timedRuns.length > 0
+    ? Math.min(...timedRuns.map((run) => run.testTimeStartMs))
+    : null;
+  const testTimeMs = timedRuns.length === 0
+    ? null
+    : Math.max(...timedRuns.map((run) => run.testTimeEndMs)) - testTimeStartedAtMs;
+  return {
+    completed: activeRuns.length,
+    skipped: runs.length - activeRuns.length,
+    failed: failedRuns,
+    total,
+    correct,
+    compliant,
+    accuracy: total > 0 ? correct / total : null,
+    formatCompliance: total > 0 ? compliant / total : null,
+    ttftP50,
+    ttftP90: percentile(values("ttftMs"), 0.9),
+    inputTpsP50: calculateEffectiveInputTokensPerSecond(promptTokensP50, ttftP50),
+    e2eP50: percentile(values("endToEndLatencyMs"), 0.5),
+    promptTokensP50,
+    reasoningTokensP50: percentile(values("reasoningTokens"), 0.5),
+    testTimeMs,
+    testTimeStartedAtMs,
+  };
+}
+
+// Flattens model results into one presentation row per model × input size ×
+// needle position (size-major, mirroring the run order). `inputTokenSizes`
+// is either a flat list of sizes (Prefill Test) or a function
+// (result) => sizes[] so each model can size its own documents against its
+// advertised context window (Needle Test); a non-positive size marks a model
+// that cannot be sized and whose combinations are all skipped. Each row
+// carries the combination's completed runs, its failed-run count (failed
+// measured runs are bucketed by their 1-based run number), and an aggregate
+// summary, so rows exist before a run finishes and fill in live during a run.
+function buildContextRunRows(results, inputTokenSizes, positionPercents, runsPerCombo) {
+  const sizesFor = (result) => (typeof inputTokenSizes === "function"
+    ? inputTokenSizes(result)
+    : inputTokenSizes);
+  const rows = [];
+  results.forEach((result) => {
+    sizesFor(result).forEach((inputTokens, sizeIndex) => {
+      positionPercents.forEach((positionPercent, positionIndex) => {
+        const comboIndex = sizeIndex * positionPercents.length + positionIndex;
+        const runs = result.runs.filter(
+          (run) => run.inputTokens === inputTokens && run.positionPercent === positionPercent,
+        );
+        const failed = (result.errors ?? []).filter(
+          (error) => Number.isInteger(error.run)
+            && Math.floor((error.run - 1) / runsPerCombo) === comboIndex,
+        ).length;
+        rows.push({
+          modelId: result.modelId,
+          inputTokens,
+          positionPercent,
+          sizeIndex,
+          positionIndex,
+          comboIndex,
+          runs,
+          failed,
+          perGroup: runsPerCombo,
+          result,
+          summary: summarizeContextPositionRuns(runs, failed),
+        });
+      });
+    });
+  });
+  return rows;
+}
+
+// Per-combination status so each model's size × position tests are visibly run
+// one combination at a time. `comboIndex` is the 0-based position of the
+// combination in the size-major sequence. Fully-skipped combinations report
+// "Skipped" instead of "Completed".
+function contextGroupStatus({ result, runs, failed, perGroup, comboIndex }) {
+  const progress = `${runs.length}/${perGroup}`;
+  if (!result) return { text: "-", className: "" };
+  const skippedRuns = runs.filter((run) => run?.skipped).length;
+  if (runs.length > 0 && skippedRuns === runs.length) {
+    return { text: `Skipped ${progress}`, className: "" };
+  }
+  if (runs.length + failed >= perGroup) {
+    if (failed === 0) return { text: `Completed ${progress}`, className: "complete" };
+    return runs.length > 0
+      ? { text: `Partial ${progress}`, className: "partial" }
+      : { text: `Failed ${progress}`, className: "error" };
+  }
+  const activeMatch = /^run (\d+)\/(\d+)$/i.exec(result.status);
+  if (activeMatch) {
+    const activeGroup = Math.floor((Number(activeMatch[1]) - 1) / perGroup);
+    if (comboIndex === activeGroup) {
+      // Count the in-flight run (and any failed attempts) so the row reads
+      // "Running 1/3" as soon as its first run starts streaming, not
+      // "Running 0/3".
+      const inFlight = Math.min(runs.length + failed + 1, perGroup);
+      return { text: `Running ${inFlight}/${perGroup}`, className: "running" };
+    }
+    if (comboIndex < activeGroup) {
+      return failed > 0
+        ? { text: `Partial ${progress}`, className: "partial" }
+        : { text: `Completed ${progress}`, className: "complete" };
+    }
+    return { text: "Waiting", className: "" };
+  }
+  if (result.status === "warming") return { text: `Warming up ${progress}`, className: "running" };
+  if (result.status === "queued") {
+    return runs.length > 0
+      ? { text: `Partial ${progress}`, className: "partial" }
+      : { text: "Queued", className: "" };
+  }
+  if (result.status === "cancelled") {
+    return { text: `Cancelled ${progress}`, className: "running" };
+  }
+  if (result.status === "error") return { text: `Error ${progress}`, className: "error" };
+  if (failed > 0) return { text: `Partial ${progress}`, className: "partial" };
+  return { text: "Waiting", className: "" };
+}
+
+// Pivots the per-combination rows into one matrix row per model × input size,
+// with one accuracy cell per needle position (`acc<percent>` keys for the
+// sortable matrix columns, plus a `byPosition` map with the full cell state).
+// Cells are pending (no attempts yet), skipped (size exceeds the model's
+// advertised window), or an accuracy ratio.
+function buildContextMatrixRows(runRows, positionPercents) {
+  const byKey = new Map();
+  runRows.forEach((view) => {
+    const key = `${view.modelId}|${view.inputTokens}`;
+    if (!byKey.has(key)) {
+      byKey.set(key, {
+        modelId: view.modelId,
+        inputTokens: view.inputTokens,
+        byPosition: new Map(),
+      });
+    }
+    const summary = view.summary;
+    const cell = {
+      accuracy: summary.accuracy,
+      attempts: summary.total,
+      correct: summary.correct,
+      skipped: summary.completed === 0 && summary.skipped > 0 && summary.failed === 0,
+      pending: summary.total === 0 && summary.skipped === 0,
+    };
+    byKey.get(key).byPosition.set(view.positionPercent, cell);
+  });
+  return [...byKey.values()].map((entry) => {
+    const row = {
+      modelId: entry.modelId,
+      inputTokens: entry.inputTokens,
+      byPosition: entry.byPosition,
+    };
+    positionPercents.forEach((percent) => {
+      row[`acc${percent}`] = entry.byPosition.get(percent)?.accuracy ?? null;
+    });
+    return row;
+  });
+}
+
 function summarizeBenchmarkUsage(result) {
-  const requests = [result.warmup, ...result.runs].filter(Boolean);
+  // Skipped runs (Long Context 1 combinations that exceed the model's
+  // context window) never hit the endpoint, so they carry no usage.
+  const requests = [result.warmup, ...result.runs].filter(
+    (request) => request && !request.skipped,
+  );
   const promptTokens = requests.reduce((sum, request) => sum + request.promptTokens, 0);
   const completionTokens = requests.reduce((sum, request) => sum + request.completionTokens, 0);
   const inputPrice = result.pricing?.inputPerMillionTokens;
@@ -586,6 +1105,143 @@ function renderBenchmarkStatusCell(cell, statusText, statusClass, result) {
   cell.addEventListener("focusout", hideBenchmarkErrorTooltip);
 }
 
+// Styled confirmation dialog used for pre-run warnings: a replacement for
+// window.confirm that matches the app's design. Renders a modal with a
+// headline, per-item rows (`{ label, detail, meta, muted }`), an emphasized
+// totals block, and a footnote; resolves true only on the confirm button,
+// false on Cancel, Escape, or a backdrop click. Focus starts on Cancel (the
+// safe default for expensive actions), stays trapped while open, and returns
+// to the previously focused element afterwards.
+function showBenchmarkConfirm({
+  title,
+  headline = null,
+  rows = [],
+  totals = null,
+  note = null,
+  confirmLabel = "OK",
+  cancelLabel = "Cancel",
+}) {
+  return new Promise((resolve) => {
+    const previousFocus = document.activeElement instanceof HTMLElement
+      ? document.activeElement
+      : null;
+    const titleId = `benchmark-confirm-title-${Math.random().toString(36).slice(2, 8)}`;
+
+    const overlay = document.createElement("div");
+    overlay.className = "confirm-overlay";
+    const dialog = document.createElement("div");
+    dialog.className = "confirm-dialog";
+    dialog.setAttribute("role", "dialog");
+    dialog.setAttribute("aria-modal", "true");
+    dialog.setAttribute("aria-labelledby", titleId);
+
+    const heading = document.createElement("h2");
+    heading.className = "confirm-title";
+    heading.id = titleId;
+    heading.textContent = title;
+    dialog.append(heading);
+
+    if (headline != null) {
+      const headlineElement = document.createElement("p");
+      headlineElement.className = "confirm-headline";
+      headlineElement.textContent = headline;
+      dialog.append(headlineElement);
+    }
+
+    if (rows.length > 0) {
+      const list = document.createElement("ul");
+      list.className = "confirm-rows";
+      rows.forEach((row) => {
+        const item = document.createElement("li");
+        item.className = row?.muted ? "confirm-row confirm-row-muted" : "confirm-row";
+        const label = document.createElement("span");
+        label.className = "confirm-row-label";
+        label.textContent = row?.label ?? "";
+        item.append(label);
+        const detail = document.createElement("span");
+        detail.className = "confirm-row-detail";
+        detail.textContent = row?.detail ?? "";
+        item.append(detail);
+        if (row?.meta != null) {
+          const meta = document.createElement("span");
+          meta.className = "confirm-row-meta";
+          meta.textContent = row.meta;
+          item.append(meta);
+        }
+        list.append(item);
+      });
+      dialog.append(list);
+    }
+
+    if (totals != null) {
+      const totalsElement = document.createElement("div");
+      totalsElement.className = "confirm-totals";
+      const label = document.createElement("span");
+      label.className = "confirm-totals-label";
+      label.textContent = "Totals";
+      totalsElement.append(label);
+      const detail = document.createElement("span");
+      detail.className = "confirm-totals-detail";
+      detail.textContent = totals.detail ?? "";
+      totalsElement.append(detail);
+      if (totals.meta != null) {
+        const meta = document.createElement("span");
+        meta.className = "confirm-totals-meta";
+        meta.textContent = totals.meta;
+        totalsElement.append(meta);
+      }
+      dialog.append(totalsElement);
+    }
+
+    if (note != null) {
+      const noteElement = document.createElement("p");
+      noteElement.className = "confirm-note";
+      noteElement.textContent = note;
+      dialog.append(noteElement);
+    }
+
+    const actions = document.createElement("div");
+    actions.className = "confirm-actions";
+    const cancelButton = document.createElement("button");
+    cancelButton.type = "button";
+    cancelButton.className = "confirm-cancel";
+    cancelButton.textContent = cancelLabel;
+    const confirmButton = document.createElement("button");
+    confirmButton.type = "button";
+    confirmButton.className = "confirm-go";
+    confirmButton.textContent = confirmLabel;
+    actions.append(cancelButton, confirmButton);
+    dialog.append(actions);
+    overlay.append(dialog);
+
+    function close(result) {
+      document.removeEventListener("keydown", onKeydown);
+      overlay.remove();
+      if (previousFocus != null && document.contains(previousFocus)) previousFocus.focus();
+      resolve(result);
+    }
+    function onKeydown(event) {
+      if (event.key === "Escape") {
+        event.preventDefault();
+        close(false);
+      } else if (event.key === "Tab") {
+        // Simple focus trap: only the two action buttons are focusable.
+        event.preventDefault();
+        if (document.activeElement === confirmButton) cancelButton.focus();
+        else confirmButton.focus();
+      }
+    }
+    confirmButton.addEventListener("click", () => close(true));
+    cancelButton.addEventListener("click", () => close(false));
+    overlay.addEventListener("mousedown", (event) => {
+      if (event.target === overlay) close(false);
+    });
+    document.addEventListener("keydown", onKeydown);
+    document.body.append(overlay);
+    cancelButton.focus();
+  });
+}
+
 function formatCost(value) {
   if (value === null || value === undefined) return "-";
   if (value > 0 && value < 0.000001) return "<$0.000001";
@@ -684,12 +1340,14 @@ function exportBenchmarkJsonFile({
 }
 
 // --- Shared benchmark infrastructure (column picker, sort state, run sequence) ---
-// Kept here so Speed Test 1, Thinking Test 1, and the Decode Test share one
-// implementation of column management, the warmup/measured loop, and SSE parsing
-// instead of duplicating it. This file also owns the per-benchmark pure
-// view-model helpers (for example the Decode Test's token split, run grouping,
-// group status, matrix pivot, and measurement mapping above) so they can be
-// unit-tested without a DOM.
+// Kept here so Speed Test 1, Thinking Test 1, the Decode Test, and the
+// Needle and Prefill Tests share one implementation of column management, the
+// warmup/measured loop, and SSE parsing instead of duplicating it. This file
+// also owns the per-benchmark pure view-model helpers (for example the Decode
+// Test's token split, run grouping, group status, matrix pivot, and
+// measurement mapping, and the long-context tests' task generation, grading,
+// and per-combination accuracy summaries above) so they can be unit-tested
+// without a DOM.
 
 function loadVisibleColumnSet(storageKey, allKeys, defaultColumns) {
   try {
@@ -1065,6 +1723,47 @@ function formatCapturedStreamResponse(responseHeaderLines, rawResponseChunks) {
   ].join("\n");
 }
 
+// Streaming request bodies (needed for upload-progress telemetry) require
+// duplex: "half". Detect support once; where unsupported (older Safari), the
+// requests fall back to a plain string body and simply skip the progress bar.
+const STREAM_UPLOAD_SUPPORTED = (() => {
+  try {
+    new Request("http://localhost/", {
+      method: "POST",
+      body: new ReadableStream({ start: (controller) => controller.close() }),
+      duplex: "half",
+    });
+    return true;
+  } catch {
+    return false;
+  }
+})();
+
+// Streams a request body in chunks and reports byte progress through
+// liveState (uploadTotalBytes / uploadLoadedBytes) so the UI can show how
+// much of the input has been sent. The body is encoded once and chunked at
+// byte boundaries, and ReadableStream bodies apply backpressure, so the
+// counts track the connection closely.
+function createChunkedUploadBody(bodyText, liveState) {
+  const bytes = new TextEncoder().encode(bodyText);
+  liveState.uploadTotalBytes = bytes.length;
+  liveState.uploadLoadedBytes = 0;
+  const chunkSize = 65536;
+  let offset = 0;
+  return new ReadableStream({
+    pull(controller) {
+      if (offset >= bytes.length) {
+        controller.close();
+        return;
+      }
+      const end = Math.min(offset + chunkSize, bytes.length);
+      controller.enqueue(bytes.subarray(offset, end));
+      offset = end;
+      liveState.uploadLoadedBytes = offset;
+    },
+  });
+}
+
 async function runStreamingChatCompletion({
   modelId,
   config,
@@ -1074,6 +1773,10 @@ async function runStreamingChatCompletion({
   body,
   logName,
   captureExchange = false,
+  // Optional mutable object the caller keeps a reference to: stamped with
+  // dispatchAtMs at request dispatch, so a live UI can tick timers from the
+  // moment the request goes out while it is in flight.
+  liveState = null,
 }) {
   const requestController = new AbortController();
   const abortFromOuter = () => requestController.abort(outerSignal.reason);
@@ -1087,6 +1790,9 @@ async function runStreamingChatCompletion({
     config.timeoutMs,
   );
   const startedAt = performance.now();
+  if (liveState) {
+    liveState.dispatchAtMs = startedAt;
+  }
   let reader = null;
 
   try {
@@ -1099,15 +1805,33 @@ async function runStreamingChatCompletion({
       logBenchmarkRaw(config, logName, `${modelId} · ${runLabel} · RAW REQUEST`, rawRequestText);
     }
 
-    const response = await fetch(requestUrl, {
+    // Stream the body in chunks when upload telemetry is requested, so the
+    // running row can show an input progress bar; otherwise send a plain
+    // string body (identical wire behavior to before).
+    const bodyText = JSON.stringify(body);
+    const useStreamUpload = liveState != null && STREAM_UPLOAD_SUPPORTED;
+    const requestBody = useStreamUpload
+      ? createChunkedUploadBody(bodyText, liveState)
+      : bodyText;
+    const requestInit = {
       method: "POST",
       headers: buildApiHeaders(connection.apiKey, {
         accept: "text/event-stream",
         contentType: "application/json",
       }),
-      body: JSON.stringify(body),
+      body: requestBody,
       signal: requestController.signal,
-    });
+    };
+    if (useStreamUpload) requestInit.duplex = "half";
+
+    const response = await fetch(requestUrl, requestInit);
+
+    // Response headers are only available once the endpoint has received the
+    // whole request, so dispatch -> headers is the request's send phase:
+    // uploading the entire prompt and having the endpoint accept it. Recorded
+    // per run (sendMs) for the raw results/export data.
+    const headersAt = performance.now();
+    if (liveState) liveState.headersAtMs = headersAt;
 
     const responseHeaderLines = shouldBuildDiagnosticText
       ? [`HTTP ${response.status} ${response.statusText}`.trim()]
@@ -1231,6 +1955,7 @@ async function runStreamingChatCompletion({
       reasoningText,
       contentText,
       measurement: {
+        sendMs: headersAt - startedAt,
         ttftMs: firstTokenAt - startedAt,
         ttftContentMs: firstContentTokenAt === null ? null : firstContentTokenAt - startedAt,
         lastTokenMs: lastTokenAt === null ? null : lastTokenAt - startedAt,

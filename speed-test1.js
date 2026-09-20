@@ -217,6 +217,7 @@ form.addEventListener("submit", async (event) => {
     if (typeof resetThinkingResults === "function") resetThinkingResults();
     if (typeof resetSpeedResults === "function") resetSpeedResults();
     if (typeof resetDecodeResults === "function") resetDecodeResults();
+    if (typeof resetContextResults === "function") resetContextResults();
     updateSelectionCount();
     updateModelResultsState();
     const referenceMatches = models.filter((model) => model.referenceMatched).length;
@@ -232,6 +233,7 @@ form.addEventListener("submit", async (event) => {
     if (typeof resetThinkingResults === "function") resetThinkingResults();
     if (typeof resetSpeedResults === "function") resetSpeedResults();
     if (typeof resetDecodeResults === "function") resetDecodeResults();
+    if (typeof resetContextResults === "function") resetContextResults();
     renderTable();
     updateSelectionCount();
     results.hidden = false;
@@ -509,10 +511,21 @@ function isDecodeBenchmarkRunningSafely() {
   }
 }
 
+function isContextBenchmarkRunningSafely() {
+  if (typeof isAnyContextBenchmarkRunning !== "function") return false;
+  try {
+    return isAnyContextBenchmarkRunning();
+  } catch {
+    return false;
+  }
+}
+
 let _warnedAboutMissingThinkingScript = false;
 function isThinkingBenchmarkRunning() {
   try {
-    return thinkingAbortController != null || isDecodeBenchmarkRunningSafely();
+    return thinkingAbortController != null
+      || isDecodeBenchmarkRunningSafely()
+      || isContextBenchmarkRunningSafely();
   } catch (error) {
     if (!_warnedAboutMissingThinkingScript && error instanceof ReferenceError) {
       _warnedAboutMissingThinkingScript = true;
@@ -525,7 +538,9 @@ function isThinkingBenchmarkRunning() {
 let _warnedAboutMissingSpeedScript = false;
 function isSpeedBenchmarkRunning() {
   try {
-    return speedAbortController != null || isDecodeBenchmarkRunningSafely();
+    return speedAbortController != null
+      || isDecodeBenchmarkRunningSafely()
+      || isContextBenchmarkRunningSafely();
   } catch (error) {
     if (!_warnedAboutMissingSpeedScript && error instanceof ReferenceError) {
       _warnedAboutMissingSpeedScript = true;
@@ -1016,7 +1031,8 @@ function updateSpeedRunButtonState() {
     || modelsLoading
     || speedAbortController != null
     || (typeof thinkingAbortController !== "undefined" && thinkingAbortController != null)
-    || isDecodeBenchmarkRunningSafely();
+    || isDecodeBenchmarkRunningSafely()
+    || isContextBenchmarkRunningSafely();
 }
 
 function setSpeedRunning(isRunning) {
@@ -1044,6 +1060,8 @@ function setSpeedRunning(isRunning) {
       || !models.some((model) => model.selected)
       || modelsLoading;
   }
+  // Lock or release the long-context tests' run buttons (needle + prefill).
+  if (typeof updateContextRunButtons === "function") updateContextRunButtons(isRunning);
   if (isRunning) startSpeedClock(); else stopSpeedClock();
 }
 

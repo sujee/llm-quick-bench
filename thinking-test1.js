@@ -194,7 +194,8 @@ function updateThinkingRunButtonState() {
     || modelsLoading
     || (typeof speedAbortController !== "undefined" && speedAbortController != null)
     || thinkingAbortController != null
-    || (typeof isDecodeBenchmarkRunning === "function" && isDecodeBenchmarkRunning());
+    || (typeof isDecodeBenchmarkRunning === "function" && isDecodeBenchmarkRunning())
+    || (typeof isAnyContextBenchmarkRunning === "function" && isAnyContextBenchmarkRunning());
 }
 
 function setThinkingRunning(isRunning) {
@@ -224,6 +225,8 @@ function setThinkingRunning(isRunning) {
       || !models.some((model) => model.selected)
       || modelsLoading;
   }
+  // Lock or release the long-context tests' run buttons (needle + prefill).
+  if (typeof updateContextRunButtons === "function") updateContextRunButtons(isRunning);
   if (isRunning) startThinkingClock(); else stopThinkingClock();
 }
 

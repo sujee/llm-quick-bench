@@ -269,6 +269,7 @@ decodeForm.addEventListener("submit", async (event) => {
     renderBenchmarkSafely(renderDecodeResults, "Decode Test final state");
     if (typeof updateSpeedRunButtonState === "function") updateSpeedRunButtonState();
     if (typeof updateThinkingRunButtonState === "function") updateThinkingRunButtonState();
+    if (typeof updateContextRunButtonState === "function") updateContextRunButtonState();
   }
 });
 
@@ -281,12 +282,14 @@ function updateDecodeRunButtonState() {
     || modelsLoading
     || decodeAbortController != null
     || (typeof speedAbortController !== "undefined" && speedAbortController != null)
-    || (typeof thinkingAbortController !== "undefined" && thinkingAbortController != null);
+    || (typeof thinkingAbortController !== "undefined" && thinkingAbortController != null)
+    || (typeof isAnyContextBenchmarkRunning === "function" && isAnyContextBenchmarkRunning());
 }
 
 function setDecodeRunning(isRunning) {
   const otherRunning = (typeof speedAbortController !== "undefined" && speedAbortController != null)
-    || (typeof thinkingAbortController !== "undefined" && thinkingAbortController != null);
+    || (typeof thinkingAbortController !== "undefined" && thinkingAbortController != null)
+    || (typeof isAnyContextBenchmarkRunning === "function" && isAnyContextBenchmarkRunning());
   decodeRunButton.disabled = isRunning
     || otherRunning
     || !models?.some((model) => model.selected)
@@ -311,6 +314,8 @@ function setDecodeRunning(isRunning) {
       || !models.some((model) => model.selected)
       || modelsLoading;
   }
+  // Lock or release the long-context tests' run buttons (needle + prefill).
+  if (typeof updateContextRunButtons === "function") updateContextRunButtons(isRunning);
   if (isRunning) startDecodeClock(); else stopDecodeClock();
 }
 

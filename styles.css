@@ -1885,6 +1885,222 @@ td:first-child {
   font-weight: 800;
 }
 
+/* --- Long Context 1 (needle retrieval by document position) --- */
+
+.context-table td.context-empty-cell {
+  padding: 26px 16px;
+  color: var(--muted);
+  font-family: inherit;
+  font-weight: 500;
+  text-align: center;
+}
+
+.context-table {
+  width: 100%;
+  min-width: 1000px;
+  table-layout: fixed;
+  border: 1px solid var(--control-border);
+  border-collapse: separate;
+  border-spacing: 0;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--surface);
+  font-size: 0.78rem;
+}
+
+/* Headers are rendered as sort buttons, so the <th> keeps zero padding and the
+   button provides its own spacing. Header labels wrap; data cells stay on one line. */
+.context-table th {
+  padding: 0;
+  white-space: normal;
+}
+
+.context-table td {
+  padding: 11px 10px;
+  white-space: nowrap;
+}
+
+.context-table td[data-context-column="modelId"] {
+  overflow-wrap: anywhere;
+  white-space: normal;
+}
+
+.context-table .sort-button {
+  position: relative;
+  min-height: 52px;
+  gap: 5px;
+  padding: 10px 24px 10px 12px;
+  font-size: 0.64rem;
+  line-height: 1.25;
+  white-space: normal;
+}
+
+.context-table .sort-button > span:first-child {
+  min-width: 0;
+}
+
+.context-table .sort-icon {
+  position: absolute;
+  top: 50%;
+  right: 9px;
+  transform: translateY(-50%);
+  transition: color 150ms ease, opacity 150ms ease;
+}
+
+.context-table th[aria-sort="none"] .sort-icon {
+  opacity: 0;
+}
+
+.context-table th[aria-sort="none"]:hover .sort-icon,
+.context-table th[aria-sort="none"] .sort-button:focus-visible .sort-icon {
+  opacity: 1;
+}
+
+.context-table th[data-context-column="modelId"] { width: 14%; }
+.context-table th[data-context-column="status"] { width: 10%; }
+.context-table th[data-context-column="inputTokens"] { width: 9%; }
+.context-table th[data-context-column="positionPercent"] { width: 15%; }
+.context-table th[data-context-column="accuracy"] { width: 10%; }
+.context-table th[data-context-column="inputTpsP50"] { width: 13%; }
+.context-table th[data-context-column="ttftP50"] { width: 9%; }
+.context-table th[data-context-column="ttftP90"] { width: 9%; }
+.context-table th[data-context-column="testTimeMs"] { width: 8%; }
+.context-table th[data-context-column="promptTokensP50"] { width: 10%; }
+
+.context-table td[data-context-column="modelId"],
+.context-table td[data-context-column="status"] {
+  text-align: left;
+}
+
+.context-table td[data-context-column="inputTokens"],
+.context-table td[data-context-column="positionPercent"],
+.context-table td[data-context-column="accuracy"],
+.context-table td[data-context-column="inputTpsP50"],
+.context-table td[data-context-column="ttftP50"],
+.context-table td[data-context-column="ttftP90"],
+.context-table td[data-context-column="testTimeMs"],
+.context-table td[data-context-column="promptTokensP50"] {
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+
+.context-table tbody tr.context-model-start td {
+  border-top: 2px solid var(--control-border-strong);
+}
+
+.context-table td.context-tps-cell {
+  color: var(--accent-dark);
+  font-size: 0.92rem;
+  font-weight: 800;
+}
+
+/* Accuracy matrix: one row per model x input size, one column per position. */
+.context-matrix-section {
+  margin: 22px 30px 4px;
+}
+
+.context-matrix {
+  width: 100%;
+  table-layout: fixed;
+  border: 1px solid var(--control-border);
+  border-collapse: separate;
+  border-spacing: 0;
+  border-radius: 12px;
+  overflow: hidden;
+  background: var(--surface);
+  font-size: 0.82rem;
+}
+
+.context-matrix th {
+  padding: 0;
+  background: var(--surface-subtle);
+  color: var(--muted-strong);
+  font-size: 0.64rem;
+  font-weight: 800;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  white-space: normal;
+}
+
+.context-matrix th:first-child {
+  width: 30%;
+}
+
+/* The matrix uses the same sortable-header pattern as the run table. */
+.context-matrix .sort-button {
+  position: relative;
+  min-height: 46px;
+  gap: 5px;
+  padding: 10px 24px 10px 12px;
+  font-size: 0.64rem;
+  line-height: 1.25;
+  white-space: normal;
+}
+
+.context-matrix .sort-button > span:first-child {
+  min-width: 0;
+}
+
+.context-matrix .sort-icon {
+  position: absolute;
+  top: 50%;
+  right: 9px;
+  transform: translateY(-50%);
+  transition: color 150ms ease, opacity 150ms ease;
+}
+
+.context-matrix th[aria-sort="none"] .sort-icon {
+  opacity: 0;
+}
+
+.context-matrix th[aria-sort="none"]:hover .sort-icon,
+.context-matrix th[aria-sort="none"] .sort-button:focus-visible .sort-icon {
+  opacity: 1;
+}
+
+.context-matrix th.sorted-column {
+  background: var(--surface-selected);
+  box-shadow: inset 2px 0 0 var(--focus-ring), inset -2px 0 0 var(--focus-ring);
+}
+
+.context-matrix th.sorted-column .sort-button {
+  color: var(--accent-dark);
+}
+
+.context-matrix td {
+  padding: 12px 16px;
+  border-top: 1px solid var(--line);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.context-matrix tbody tr:nth-child(even) td {
+  background: var(--surface-row);
+}
+
+.context-matrix td.context-matrix-model {
+  color: var(--ink);
+  font-weight: 750;
+  overflow-wrap: anywhere;
+  text-align: left;
+  white-space: normal;
+}
+
+.context-matrix td.context-matrix-size {
+  color: var(--ink);
+  font-weight: 750;
+}
+
+.context-matrix td.context-accuracy-cell {
+  font-variant-numeric: tabular-nums;
+}
+
+.context-matrix td.context-accuracy-skipped {
+  color: var(--muted);
+  font-weight: 500;
+}
+
+
 .decode-matrix-section,
 .decode-chart-section {
   margin: 22px 30px 4px;
@@ -2156,5 +2372,248 @@ td:first-child {
   .decode-run-head {
     margin-left: 18px;
     margin-right: 18px;
+  }
+}
+
+/* --- Pre-run confirmation dialog (styled window.confirm replacement) --- */
+
+.confirm-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 300;
+  display: grid;
+  place-items: center;
+  padding: 24px;
+  background: rgba(9, 14, 12, 0.46);
+  animation: confirm-overlay-enter 140ms ease-out;
+}
+
+.confirm-dialog {
+  width: min(560px, 100%);
+  max-height: min(640px, calc(100vh - 48px));
+  overflow-y: auto;
+  padding: 22px 24px 20px;
+  border: 1px solid var(--control-border-strong);
+  border-radius: 16px;
+  background: var(--surface-strong);
+  box-shadow: 0 24px 56px rgba(23, 32, 29, 0.3);
+  animation: confirm-dialog-enter 170ms cubic-bezier(0.2, 0.9, 0.3, 1.05);
+}
+
+.confirm-title {
+  margin: 0 0 10px;
+  font-size: 1.15rem;
+  font-weight: 700;
+  color: var(--ink);
+}
+
+.confirm-headline {
+  margin: 0 0 14px;
+  font-size: 0.92rem;
+  line-height: 1.5;
+  color: var(--ink-soft);
+}
+
+.confirm-rows {
+  list-style: none;
+  margin: 0 0 14px;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.confirm-row {
+  display: grid;
+  grid-template-columns: minmax(110px, auto) 1fr auto;
+  gap: 4px 12px;
+  align-items: baseline;
+  padding: 10px 12px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: var(--surface-subtle);
+}
+
+.confirm-row-muted {
+  opacity: 0.6;
+}
+
+.confirm-row-label {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--ink);
+  word-break: break-all;
+}
+
+.confirm-row-detail {
+  font-size: 0.85rem;
+  color: var(--ink-soft);
+  font-variant-numeric: tabular-nums;
+}
+
+.confirm-row-meta {
+  font-size: 0.8rem;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
+
+.confirm-totals {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px 12px;
+  align-items: baseline;
+  justify-content: space-between;
+  margin-bottom: 12px;
+  padding: 10px 12px;
+  border: 1px solid var(--accent);
+  border-radius: 10px;
+  background: var(--accent-soft);
+}
+
+.confirm-totals-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--accent-dark);
+}
+
+.confirm-totals-detail {
+  font-size: 0.85rem;
+  color: var(--ink);
+  font-variant-numeric: tabular-nums;
+}
+
+.confirm-totals-meta {
+  font-size: 0.85rem;
+  font-weight: 700;
+  color: var(--accent-dark);
+  font-variant-numeric: tabular-nums;
+}
+
+.confirm-note {
+  margin: 0 0 16px;
+  font-size: 0.8rem;
+  line-height: 1.5;
+  color: var(--muted);
+}
+
+.confirm-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 10px;
+}
+
+.confirm-actions button {
+  min-width: 110px;
+  padding: 9px 18px;
+  border-radius: 10px;
+  font-size: 0.9rem;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.confirm-cancel {
+  border: 1px solid var(--control-border-strong);
+  background: var(--control-bg);
+  color: var(--ink);
+}
+
+.confirm-cancel:hover {
+  background: var(--surface-hover);
+}
+
+.confirm-go {
+  border: 1px solid var(--accent-dark);
+  background: var(--accent);
+  color: var(--on-accent);
+}
+
+.confirm-go:hover {
+  background: var(--accent-hover);
+}
+
+.confirm-actions button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+@keyframes confirm-overlay-enter {
+  from {
+    opacity: 0;
+  }
+
+  to {
+    opacity: 1;
+  }
+}
+
+@keyframes confirm-dialog-enter {
+  from {
+    opacity: 0;
+    transform: translateY(8px) scale(0.98);
+  }
+
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .confirm-overlay,
+  .confirm-dialog {
+    animation: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .confirm-overlay {
+    padding: 12px;
+  }
+
+  .confirm-row {
+    grid-template-columns: 1fr;
+  }
+
+  .confirm-row-meta {
+    white-space: normal;
+  }
+}
+
+/* Input upload progress bar inside a running row's Status cell. */
+.context-upload {
+  display: grid;
+  gap: 2px;
+  margin-top: 4px;
+}
+
+.context-upload-label {
+  font-size: 0.7rem;
+  line-height: 1;
+  color: var(--muted);
+  font-variant-numeric: tabular-nums;
+}
+
+.context-upload-track {
+  display: block;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--surface-muted);
+  border: 1px solid var(--line);
+  overflow: hidden;
+}
+
+.context-upload-fill {
+  display: block;
+  height: 100%;
+  border-radius: 2px;
+  background: var(--accent);
+  transition: width 120ms linear;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .context-upload-fill {
+    transition: none;
   }
 }
