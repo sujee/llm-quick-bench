@@ -1,4 +1,4 @@
-# Quick LLM Bench
+# LLM Quick Bench
 
 ## What is it?
 
@@ -16,7 +16,7 @@ It measures response speed, token throughput, latency, accuracy, token usage, an
 ## How to run it
 
 
-[![Try Quick LLM Bench live](https://img.shields.io/badge/TRY_IT_LIVE-Launch_Quick_LLM_Bench-6c5ce7?style=for-the-badge)](https://sujee.github.io/practical-llm-evals/llm-quick-bench/)
+[![Try LLM Quick Bench live](https://img.shields.io/badge/TRY_IT_LIVE-Launch_LLM_Quick_Bench-6c5ce7?style=for-the-badge)](https://sujee.github.io/llm-quick-bench/)
 
 Enter your endpoint URL and API key, load the available models, select the models you want to compare, and run a benchmark.
 
