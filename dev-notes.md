@@ -6,9 +6,10 @@ Zero dependencies, no build step. All scripts live in `js/`; classic `<script de
 
 1. `js/bench-utils.js` — shared pure + DOM helpers (streaming, tables, column picker, styled confirm dialog, long-context task generation)
 2. `js/presets.js` — pure provider configuration (endpoint presets consumed by the connection form)
-3. `js/speed-test1.js`, `js/thinking-test1.js`, `js/decode-test1.js` — the three independent benchmarks
-4. `js/context-bench.js` — the shared long-context engine (`createContextBenchmark`)
-5. `js/needle-test1.js`, `js/prefill-test1.js` — thin configs that instantiate the engine
+3. `js/model-loader.js` — the model-loading pipeline (provider `/models` fetch plus the models-generic.json cross-reference)
+4. `js/speed-test1.js`, `js/thinking-test1.js`, `js/decode-test1.js` — the three independent benchmarks
+5. `js/context-bench.js` — the shared long-context engine (`createContextBenchmark`)
+6. `js/needle-test1.js`, `js/prefill-test1.js` — thin configs that instantiate the engine
 
 The Needle Test sizes each document at a fill percent of the model's advertised context window and varies the needle position; the Prefill Test varies the input size with the needle pinned near the end. Needle Test models run strictly one at a time (uncontended prefill keeps TTFT comparable), and `showBenchmarkConfirm` (js/bench-utils.js) renders the styled pre-run dialog that totals planned requests, input tokens, and estimated input cost. Pure helpers live in `js/bench-utils.js` so they can be unit-tested without a DOM.
 
@@ -31,4 +32,4 @@ node --test tests/*.test.js
 
 ## Model Info
 
-Models meta data is in : [model-info.json](model-info.json)
+Models meta data is in : [models-generic.json](models-generic.json), fetched and cross-referenced by `js/model-loader.js`

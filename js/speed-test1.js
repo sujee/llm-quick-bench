@@ -1,11 +1,12 @@
 // LLM Quick Bench — Speed Test 1 (and the shared benchmark UI layer).
 //
-// This single classic <script> (loaded with `defer`, after bench-utils.js and
-// before thinking-test1.js) owns two things:
+// This single classic <script> (loaded with `defer`, after bench-utils.js,
+// presets.js, and model-loader.js, and before thinking-test1.js) owns two
+// things:
 //
 //   1. Shared model loading and selection state: the connection form, the
-//      models table, model-selection buttons, and the model-info.json
-//      cross-reference. thinking-test1.js consumes these
+//      models table, model-selection buttons, and the load orchestration on
+//      top of the model-loader.js pipeline. thinking-test1.js consumes these
 //      globals (form, providerSelect, endpointInput, apiKeyInput, models,
 //      modelsLoading, connectionControls, modelSelectionButtons,
 //      buildBenchmarkRequestBody, buildBenchmarkMessages,
@@ -15,8 +16,9 @@
 //      stacked panel per model with one tok/s bar per run plus an overall p50
 //      reference line across the completed runs.
 //
-// Endpoint presets live in presets.js; endpoint/streaming/summary/format
-// helpers live in bench-utils.js.
+// Endpoint presets live in presets.js; the model catalog pipeline (the
+// models-generic.json cross-reference) lives in model-loader.js;
+// endpoint/streaming/summary/format helpers live in bench-utils.js.
 
 const form = document.querySelector("#connection-form");
 const tabs = [...document.querySelectorAll('[role="tab"]')];
@@ -175,30 +177,17 @@ form.addEventListener("submit", async (event) => {
 
   try {
     const modelReference = await loadModelReference();
-    const url = buildModelsUrl(endpointInput.value, providerSelect.value);
-    const response = await fetch(url, {
-      method: "GET",
-      headers: buildApiHeaders(apiKeyInput.value.trim(), {
-        accept: "application/json",
-      }),
-    });
-
-    const payload = await readResponse(response);
-    if (!response.ok) {
-      const message = payload?.error?.message || payload?.message || response.statusText;
-      throw new Error(`${response.status} ${message}`.trim());
-    }
-
-    const returnedModels = Array.isArray(payload) ? payload : payload?.data;
-    if (!Array.isArray(returnedModels)) {
-      throw new Error("The endpoint did not return a model array or an OpenAI-style { data: [] } response.");
-    }
-
-    const crossReferencedModels = returnedModels.map((model) => toTableRow(model, modelReference));
-    models = crossReferencedModels
-      .filter((model) => !model.isEmbedding)
-      .map((model) => ({ ...model, selected: false }));
-    const skippedEmbeddings = crossReferencedModels.length - models.length;
+    const returnedModels = await fetchProviderModels(
+      endpointInput.value,
+      providerSelect.value,
+      apiKeyInput.value.trim(),
+    );
+    const {
+      models: loadedModels,
+      skippedEmbeddings,
+      crossReferenced: crossReferencedModels,
+    } = enrichModels(returnedModels, modelReference);
+    models = loadedModels;
     // Print every model returned by the endpoint to the console, one per line,
     // marking any that were filtered out (embedding models) and why.
     console.group(`[LLM Quick Bench] ${returnedModels.length} model(s) returned by /models`);
@@ -232,7 +221,7 @@ form.addEventListener("submit", async (event) => {
       ? ""
       : ` Skipped ${skippedEmbeddings} embedding model${skippedEmbeddings === 1 ? "" : "s"}.`;
     setStatus(
-      `Loaded ${models.length} model${models.length === 1 ? "" : "s"}; ${referenceMatches} matched model-info.json.${skippedMessage}`,
+      `Loaded ${models.length} model${models.length === 1 ? "" : "s"}; ${referenceMatches} matched ${MODELS_GENERIC_FILE}.${skippedMessage}`,
     );
     results.scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (error) {
@@ -261,252 +250,6 @@ function setActiveTab(activeTab) {
   tabPanels.forEach((panel) => {
     panel.hidden = panel.id !== activeTab.getAttribute("aria-controls");
   });
-}
-
-function buildModelsUrl(rawEndpoint, provider) {
-  const url = buildApiUrl(rawEndpoint, "models");
-  if (provider === "nebius") url.searchParams.set("verbose", "true");
-  return url.toString();
-}
-
-async function readResponse(response) {
-  const text = await response.text();
-  if (!text) return {};
-
-  try {
-    return JSON.parse(text);
-  } catch {
-    if (!response.ok) throw new Error(`${response.status} ${text.slice(0, 180)}`);
-    throw new Error("The endpoint returned a non-JSON response.");
-  }
-}
-
-function toTableRow(model, modelReference) {
-  const modelId = model.id ?? model.model_id ?? model.name;
-  const reference = findModelReference(modelId, modelReference);
-  const inputPrice = getPricePerMillion(
-    model.input_price_per_million_tokens,
-    model.pricing?.prompt ?? model.pricing?.input,
-  );
-  const outputPrice = getPricePerMillion(
-    model.output_price_per_million_tokens,
-    model.pricing?.completion ?? model.pricing?.output,
-  );
-
-  return {
-    modelId,
-    name: reference?.name ?? null,
-    referenceMatched: reference != null,
-    isEmbedding: isEmbeddingModel(model, reference),
-    releaseDate: normalizeReleaseDate(reference?.releaseDate),
-    aaIndex: reference?.aaIndex ?? null,
-    contextWindow: toNumber(
-      model.context_length
-        ?? model.context_window
-        ?? model.max_model_len
-        ?? (model.metadata?.context_window_k != null
-          ? Number(model.metadata.context_window_k) * 1024
-          : null)
-        ?? reference?.contextWindow,
-    ),
-    parameterCount: getParameterCount(model, reference?.paramCount),
-    inputPrice,
-    outputPrice,
-    blendedPrice: inputPrice != null && outputPrice != null
-      ? ((3 * inputPrice) + outputPrice) / 4
-      : null,
-  };
-}
-
-async function loadModelReference() {
-  let response;
-  try {
-    response = await fetch("model-info.json", { headers: { Accept: "application/json" } });
-  } catch {
-    throw new Error("Unable to load model-info.json. Serve the app over HTTP instead of opening index.html directly.");
-  }
-  if (!response.ok) {
-    throw new Error(`Unable to load model-info.json (${response.status}).`);
-  }
-
-  let entries;
-  try {
-    entries = await response.json();
-  } catch {
-    throw new Error("model-info.json contains invalid JSON.");
-  }
-  if (!Array.isArray(entries)) {
-    throw new Error("model-info.json must contain an array of models.");
-  }
-  return buildModelReference(entries);
-}
-
-function buildModelReference(entries) {
-  const exact = new Map();
-  const aliases = new Map();
-  const ambiguousAliases = new Set();
-
-  function addAlias(candidate, reference) {
-    if (!candidate) return;
-    const key = normalizeModelId(candidate);
-    if (ambiguousAliases.has(key)) return;
-    if (aliases.has(key) && aliases.get(key) !== reference) {
-      aliases.delete(key);
-      ambiguousAliases.add(key);
-      return;
-    }
-    aliases.set(key, reference);
-  }
-
-  entries.forEach((entry) => {
-    const score = toNumber(entry.aa_intelligence_index);
-    const paramCountBillions = toNumber(entry.param_count_B);
-    const contextWindow = toNumber(entry.context_window_K) != null
-      ? toNumber(entry.context_window_K) * 1024
-      : null;
-    const reference = {
-      aaIndex: score,
-      paramCount: paramCountBillions === null ? null : paramCountBillions * 1_000_000_000,
-      contextWindow,
-      type: entry.type ?? null,
-      releaseDate: normalizeReleaseDate(entry.model_release_date),
-      name: entry.name ?? null,
-    };
-
-    const name = String(entry.name ?? "");
-    const fullName = entry.model_id ?? (name.includes("/") ? name : `${entry.vendor ?? ""}/${name}`);
-    const repositoryId = String(entry.huggingface_url ?? "")
-      .replace(/^https?:\/\/huggingface\.co\//i, "")
-      .replace(/\/+$/, "");
-    const baseName = String(fullName).split("/").at(-1);
-    [fullName, baseName].forEach((candidate) => {
-      if (candidate) exact.set(normalizeModelId(candidate), reference);
-    });
-    [
-      repositoryId,
-      repositoryId.split("/").at(-1),
-      name,
-      entry.aa_slug,
-    ].forEach((candidate) => addAlias(candidate, reference));
-  });
-  return { exact, aliases };
-}
-
-function findModelReference(modelId, index) {
-  if (!modelId) return null;
-  const fullId = normalizeModelId(modelId);
-  const baseId = normalizeModelId(String(modelId).split("/").at(-1));
-  const candidates = [fullId, baseId, fullId.replace(/-fast$/, ""), baseId.replace(/-fast$/, "")];
-
-  for (const candidate of candidates) {
-    if (index.exact.has(candidate)) return index.exact.get(candidate);
-  }
-  for (const candidate of candidates) {
-    if (index.aliases.has(candidate)) return index.aliases.get(candidate);
-  }
-
-  return null;
-}
-
-function normalizeModelId(value) {
-  return String(value)
-    .toLowerCase()
-    .replace(/[^a-z0-9]+/g, "-")
-    .replace(/^-|-$/g, "");
-}
-
-function isEmbeddingModel(model, reference) {
-  const descriptors = [
-    model.id,
-    model.model_id,
-    model.name,
-    model.type,
-    model.model_type,
-    model.task,
-    model.pipeline_tag,
-    model.metadata?.type,
-    model.metadata?.task,
-    model.metadata?.pipeline_tag,
-    reference?.type,
-  ];
-
-  return descriptors.some((value) => (
-    value != null && /(^|[^a-z])(embedding|embeddings|embed)([^a-z]|$)/i.test(String(value))
-  ));
-}
-
-function normalizeReleaseDate(value) {
-  if (value == null || value === "") return null;
-
-  const numericValue = Number(value);
-  const date = Number.isFinite(numericValue)
-    ? new Date(numericValue < 1_000_000_000_000 ? numericValue * 1000 : numericValue)
-    : new Date(value);
-
-  return Number.isNaN(date.getTime()) ? null : date.toISOString().slice(0, 10);
-}
-
-function getParameterCount(model, referenceParamCount = null) {
-  const billionValue = model.size_b
-    ?? model.metadata?.size_b
-    ?? model.architecture?.size_b
-    ?? model.parameter_count_b;
-  if (billionValue != null && Number.isFinite(Number(billionValue)) && Number(billionValue) > 0) {
-    return Number(billionValue) * 1_000_000_000;
-  }
-
-  const directValue = model.parameter_count
-    ?? model.parameters_count
-    ?? model.num_parameters
-    ?? model.architecture?.parameter_count
-    ?? model.architecture?.parameters;
-  const parsedDirectValue = parseParameterCount(directValue);
-  if (parsedDirectValue != null) return parsedDirectValue;
-  if (referenceParamCount != null) return referenceParamCount;
-
-  return parseParameterCount(model.id ?? model.model_id ?? model.name);
-}
-
-function parseParameterCount(value) {
-  if (value == null) return null;
-  if (typeof value === "number") return Number.isFinite(value) ? value : null;
-
-  const text = String(value).replaceAll(",", "");
-  const sizedMatch = text.match(/(\d+(?:\.\d+)?)\s*([BM])\b/i);
-  if (sizedMatch) {
-    const multiplier = sizedMatch[2].toUpperCase() === "B" ? 1_000_000_000 : 1_000_000;
-    return Number(sizedMatch[1]) * multiplier;
-  }
-
-  const numericValue = Number(text);
-  return Number.isFinite(numericValue) ? numericValue : null;
-}
-
-function toNumber(value) {
-  if (value === null || value === undefined || value === "") return null;
-  if (typeof value === "boolean") return null;
-  const number = Number(value);
-  return Number.isFinite(number) ? number : null;
-}
-
-function getPricePerMillion(explicitPerMillion, ambiguousPrice) {
-  if (explicitPerMillion != null) {
-    return pricePerMillion(explicitPerMillion, true);
-  }
-  return pricePerMillion(ambiguousPrice);
-}
-
-function pricePerMillion(value, isAlreadyPerMillion = false) {
-  const price = toNumber(value);
-  // `null` means "no price published" (downstream treat as Unpriced).
-  // A literal `0` means "free at point of use" (downstream treat as $0.00).
-  if (price === null || price === 0) return price;
-  if (isAlreadyPerMillion) return price;
-
-  // Nested pricing fields do not consistently declare their unit. Tiny values
-  // are normally per-token amounts; explicit *_per_million_tokens fields skip
-  // this heuristic via getPricePerMillion().
-  return Math.abs(price) < 0.001 ? price * 1_000_000 : price;
 }
 
 function isDecodeBenchmarkRunningSafely() {

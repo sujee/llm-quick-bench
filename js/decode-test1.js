@@ -560,7 +560,8 @@ function renderDecodeMatrix() {
   decodeMatrix.replaceChildren(table);
 }
 
-// Friendly chart labels: prefer the catalog name from model-info.json (e.g.
+// Friendly chart labels: prefer the catalog name from the shared model
+// catalog loaded by speed-test1.js (e.g.
 // "Nemotron-3.5-Lightning" -> "Nemotron 3.5 Lightning"), falling back to the
 // model id without its vendor prefix. Tooltips still show the full model id.
 function shortModelLabel(modelId) {
