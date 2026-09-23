@@ -272,6 +272,11 @@
             <p class="hint">Longer outputs stabilize the throughput curve.</p>
           </div>
           <div class="field">
+            <label for="speed-temperature">Temperature</label>
+            <input id="speed-temperature" type="number" min="0" max="2" step="0.1" value="0" required />
+            <p class="hint">Sampling temperature; 0 keeps runs deterministic.</p>
+          </div>
+          <div class="field">
             <label for="speed-concurrency">Parallel models to test</label>
             <input id="speed-concurrency" type="number" min="1" max="12" value="3" required />
             <p class="hint">Runs for the same model stay serial.</p>

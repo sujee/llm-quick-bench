@@ -690,6 +690,12 @@ function formatBenchmarkResultStatus(result, totalRuns) {
   }
 }
 
+function clampTemperature(value, minimum = 0, maximum = 2) {
+  const parsed = Number(value);
+  const clamped = Number.isFinite(parsed) ? parsed : minimum;
+  return Math.min(maximum, Math.max(minimum, clamped));
+}
+
 function buildBenchmarkRequestBody(modelId, config, includeUsage = true, provider = null) {
   // OpenAI newer endpoints reject the legacy `max_tokens` field; vLLM and most
   // OpenAI-compatible servers accept it. Pick the field name by provider so
@@ -699,7 +705,7 @@ function buildBenchmarkRequestBody(modelId, config, includeUsage = true, provide
     model: modelId,
     messages: buildBenchmarkMessages(config.prompt),
     stream: true,
-    temperature: 0,
+    temperature: config.temperature ?? 0,
     top_p: 1,
     [outputLimitField]: config.maxTokens,
   };
@@ -833,6 +839,7 @@ function setStatus(message, isError = false) {
 const speedForm = document.querySelector("#speed-form");
 const speedRunsInput = document.querySelector("#speed-runs");
 const speedMaxTokensInput = document.querySelector("#speed-max-tokens");
+const speedTemperatureInput = document.querySelector("#speed-temperature");
 const speedConcurrencyInput = document.querySelector("#speed-concurrency");
 const speedTimeoutInput = document.querySelector("#speed-timeout");
 const speedPromptInput = document.querySelector("#speed-prompt");
@@ -913,7 +920,7 @@ document.addEventListener("models:selection-changed", updateSpeedRunButtonState)
 document.addEventListener("models:selection-changed", () => {
   if (speedAbortController == null) renderSpeedGraphs();
 });
-[speedPromptInput, speedMaxTokensInput].forEach((input) => {
+[speedPromptInput, speedMaxTokensInput, speedTemperatureInput].forEach((input) => {
   input.addEventListener("input", renderSpeedRequestTemplate);
 });
 [speedDisableThinkingInput, speedFixedOutputInput].forEach((input) => {
@@ -937,6 +944,7 @@ speedForm.addEventListener("submit", async (event) => {
   const config = {
     runs: clampInteger(speedRunsInput.value, 1, 20),
     maxTokens: clampInteger(speedMaxTokensInput.value, 32, 4096),
+    temperature: clampTemperature(speedTemperatureInput.value),
     concurrency: clampInteger(speedConcurrencyInput.value, 1, 12),
     timeoutMs: clampInteger(speedTimeoutInput.value, 10, 600) * 1000,
     prompt: speedPromptInput.value.trim(),
@@ -965,7 +973,7 @@ speedForm.addEventListener("submit", async (event) => {
     config,
     runSeed,
     methodology: {
-      temperature: 0,
+      temperature: config.temperature,
       topP: 1,
       ttft: "request dispatch to first non-empty content or reasoning delta",
       tokensPerSecond: "completion tokens / seconds from first generated delta to stream end",
@@ -1260,6 +1268,7 @@ function renderSpeedRequestTemplate() {
   const previewConfig = {
     prompt: speedPromptInput.value.trim(),
     maxTokens: clampInteger(speedMaxTokensInput.value, 32, 4096),
+    temperature: clampTemperature(speedTemperatureInput.value),
     disableThinking: speedDisableThinkingInput.checked,
     fixedOutput: speedFixedOutputInput.checked,
   };
