@@ -1,8 +1,9 @@
-// LLM Quick Bench — shared endpoint presets.
+// LLM Quick Bench — shared endpoint presets and provider request defaults.
 //
-// Pure provider configuration data (no DOM, no side effects). Loaded before
-// speed-test1.js so the connection form can populate the endpoint field from a
-// selected provider.
+// Pure provider configuration data plus a tiny registry so the benchmark tests
+// can reset their option controls from provider-specific defaults. Loaded
+// before speed-test1.js so the connection form can populate the endpoint field
+// from a selected provider.
 
 const endpointPresets = {
   nebius: {
@@ -38,3 +39,40 @@ const endpointPresets = {
     hint: "Local LM Studio OpenAI-compatible API base URL.",
   },
 };
+
+// Shared option defaults for every benchmark test. A `null` value means the
+// option is omitted from the request body entirely.
+const TEST_REQUEST_DEFAULTS = {
+  speed: { temperature: 0, minTokens: 1024, maxTokens: 1024, disableThinking: true },
+  thinking: { disableThinking: false },
+  decode: { disableThinking: true, fixedOutput: true },
+  needle: {},
+  prefill: {},
+};
+
+// Per-provider overrides layered over TEST_REQUEST_DEFAULTS. Providers not
+// listed here use the shared defaults unchanged.
+const PROVIDER_TEST_REQUEST_OVERRIDES = {
+  openai: {
+    speed: { temperature: null, minTokens: null, disableThinking: false },
+    decode: { disableThinking: false, fixedOutput: false },
+  },
+};
+
+function resolveTestRequestDefaults(testKey, provider) {
+  const base = TEST_REQUEST_DEFAULTS[testKey] ?? {};
+  const override = PROVIDER_TEST_REQUEST_OVERRIDES[provider]?.[testKey] ?? {};
+  return { ...base, ...override };
+}
+
+// Each benchmark registers an applier that resets its option controls for a
+// provider. speed-test1.js owns the provider select and triggers the sweep.
+const providerDefaultsAppliers = [];
+
+function registerProviderDefaultsApplier(applier) {
+  if (typeof applier === "function") providerDefaultsAppliers.push(applier);
+}
+
+function applyProviderDefaults(provider) {
+  providerDefaultsAppliers.forEach((applier) => applier(provider));
+}

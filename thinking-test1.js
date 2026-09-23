@@ -35,6 +35,16 @@ const thinkingTimeoutInput = document.querySelector("#thinking-timeout");
 const thinkingDisableThinkingInput = document.querySelector("#thinking-disable-thinking");
 const thinkingRequireServerTokensInput = document.querySelector("#thinking-require-server-tokens");
 const thinkingLogConsoleInput = document.querySelector("#thinking-log-console");
+
+function applyThinkingProviderDefaults(provider) {
+  const defaults = resolveTestRequestDefaults("thinking", provider);
+  if ("disableThinking" in defaults) {
+    thinkingDisableThinkingInput.checked = Boolean(defaults.disableThinking);
+  }
+  renderThinkingRequestTemplate();
+}
+registerProviderDefaultsApplier(applyThinkingProviderDefaults);
+
 const thinkingConfigInputs = [...thinkingForm.querySelectorAll("input, select, textarea")];
 const thinkingRunButton = document.querySelector("#thinking-run-button");
 const thinkingCancelButton = document.querySelector("#thinking-cancel-button");
@@ -93,7 +103,7 @@ exportThinkingJsonButton.addEventListener("click", exportThinkingJson);
 resetThinkingResults();
 document.addEventListener("models:selection-changed", updateThinkingRunButtonState);
 renderThinkingMethodologySample();
-renderThinkingRequestTemplate();
+applyThinkingProviderDefaults(providerSelect.value);
 updateThinkingRunButtonState();
 
 thinkingForm.addEventListener("submit", async (event) => {

@@ -34,6 +34,19 @@ const decodeDisableThinkingInput = document.querySelector("#decode-disable-think
 const decodeFixedOutputInput = document.querySelector("#decode-fixed-output");
 const decodeRequireServerTokensInput = document.querySelector("#decode-require-server-tokens");
 const decodeLogConsoleInput = document.querySelector("#decode-log-console");
+
+function applyDecodeProviderDefaults(provider) {
+  const defaults = resolveTestRequestDefaults("decode", provider);
+  if ("disableThinking" in defaults) {
+    decodeDisableThinkingInput.checked = Boolean(defaults.disableThinking);
+  }
+  if ("fixedOutput" in defaults) {
+    decodeFixedOutputInput.checked = Boolean(defaults.fixedOutput);
+  }
+  renderDecodeRequestTemplate();
+}
+registerProviderDefaultsApplier(applyDecodeProviderDefaults);
+
 // Exclude any control that is disabled/read-only in the markup so toggling the
 // form back on after a run does not enable it.
 const decodeConfigInputs = [...decodeForm.querySelectorAll("input, select, textarea")]
@@ -1084,5 +1097,5 @@ function stopDecodeClock() {
 
 resetDecodeResults();
 renderDecodeMethodologySample();
-renderDecodeRequestTemplate();
+applyDecodeProviderDefaults(providerSelect.value);
 updateDecodeRunButtonState();

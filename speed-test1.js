@@ -80,17 +80,28 @@ if (!visibleModelColumns.has(modelTableSorter.state.key)) {
   modelTableSorter.reset({ key: [...visibleModelColumns][0], direction: "ascending" });
 }
 
+// Reset the tests' option controls only when the provider value itself
+// changes, so repeated endpoint edits within the same provider do not re-run
+// the sweep.
+let lastProviderDefaultsProvider = providerSelect.value;
+function syncProviderDefaults() {
+  if (providerSelect.value === lastProviderDefaultsProvider) return;
+  lastProviderDefaultsProvider = providerSelect.value;
+  applyProviderDefaults(providerSelect.value);
+}
+
 providerSelect.addEventListener("change", () => {
   const preset = endpointPresets[providerSelect.value];
   if (preset) {
     endpointInput.value = preset.endpoint;
     endpointHint.textContent = preset.hint;
-    return;
+  } else {
+    endpointInput.value = "";
+    endpointHint.textContent = "Enter a base URL or the full /models URL.";
+    endpointInput.focus();
+    endpointInput.select();
   }
-  endpointInput.value = "";
-  endpointHint.textContent = "Enter a base URL or the full /models URL.";
-  endpointInput.focus();
-  endpointInput.select();
+  syncProviderDefaults();
 });
 
 endpointInput.addEventListener("input", () => {
@@ -101,10 +112,11 @@ endpointInput.addEventListener("input", () => {
   if (matchingPreset) {
     providerSelect.value = matchingPreset[0];
     endpointHint.textContent = matchingPreset[1].hint;
-    return;
+  } else {
+    providerSelect.value = "custom";
+    endpointHint.textContent = "Custom OpenAI-compatible API base URL.";
   }
-  providerSelect.value = "custom";
-  endpointHint.textContent = "Custom OpenAI-compatible API base URL.";
+  syncProviderDefaults();
 });
 
 tabs.forEach((tab) => {
@@ -838,6 +850,25 @@ const speedPromptInput = document.querySelector("#speed-prompt");
 const speedLogConsoleInput = document.querySelector("#speed-log-console");
 const speedDisableThinkingInput = document.querySelector("#speed-disable-thinking");
 const speedRequireServerTokensInput = document.querySelector("#speed-require-server-tokens");
+
+function applySpeedProviderDefaults(provider) {
+  const defaults = resolveTestRequestDefaults("speed", provider);
+  if ("temperature" in defaults) {
+    speedTemperatureInput.value = defaults.temperature == null ? "" : String(defaults.temperature);
+  }
+  if ("minTokens" in defaults) {
+    speedMinTokensInput.value = defaults.minTokens == null ? "" : String(defaults.minTokens);
+  }
+  if ("maxTokens" in defaults) {
+    speedMaxTokensInput.value = defaults.maxTokens == null ? "" : String(defaults.maxTokens);
+  }
+  if ("disableThinking" in defaults) {
+    speedDisableThinkingInput.checked = Boolean(defaults.disableThinking);
+  }
+  renderSpeedRequestTemplate();
+}
+registerProviderDefaultsApplier(applySpeedProviderDefaults);
+
 const speedConfigInputs = [...speedForm.querySelectorAll("input, textarea")];
 const speedRunButton = document.querySelector("#speed-run-button");
 const speedCancelButton = document.querySelector("#speed-cancel-button");
@@ -1586,5 +1617,5 @@ function stopSpeedClock() {
 
 resetSpeedResults();
 renderSpeedMethodologySample();
-renderSpeedRequestTemplate();
+applySpeedProviderDefaults(providerSelect.value);
 updateSpeedRunButtonState();
