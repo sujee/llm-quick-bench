@@ -82,6 +82,7 @@ function loadBenchUtils() {
     formatTokenUsageBreakdown,
     getVisibleColumnDefinitions,
     parseDecodeOutputTokenOptions,
+    parseOptionalClampedNumber,
     parseSseLine,
     runBenchmarkSequence,
     runStreamingChatCompletion,
@@ -307,6 +308,23 @@ test("decode output-lengths parser handles comma-separated values", () => {
   assert.deepEqual(parse(null), []);
   assert.deepEqual(parse(undefined), []);
   assert.deepEqual(parse("50", { maxLength: 40 }), [40]);
+});
+
+test("optional numeric config parser omits empty fields instead of defaulting", () => {
+  const { utils } = loadBenchUtils();
+  const parse = utils.parseOptionalClampedNumber;
+  assert.equal(parse("", 32, 4096, { integer: true }), null);
+  assert.equal(parse("   ", 32, 4096, { integer: true }), null);
+  assert.equal(parse(null, 0, 2), null);
+  assert.equal(parse(undefined, 0, 2), null);
+  assert.equal(parse("abc", 0, 2), null);
+  assert.equal(parse("0", 0, 2), 0);
+  assert.equal(parse("0.7", 0, 2), 0.7);
+  assert.equal(parse("3", 0, 2), 2);
+  assert.equal(parse("10", 32, 4096, { integer: true }), 32);
+  assert.equal(parse("1024", 32, 4096, { integer: true }), 1024);
+  assert.equal(parse("9999", 32, 4096, { integer: true }), 4096);
+  assert.equal(parse("1024.6", 32, 4096, { integer: true }), 1025);
 });
 
 test("decode field text determines the exact max_tokens sequence of a run", () => {

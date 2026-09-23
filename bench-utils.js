@@ -1005,6 +1005,18 @@ function clampInteger(value, minimum, maximum) {
   return Math.min(maximum, Math.max(minimum, clamped));
 }
 
+// Parses an optional numeric config field. Returns null for an empty or
+// non-numeric value so callers can omit the corresponding request option
+// instead of substituting a default.
+function parseOptionalClampedNumber(value, minimum, maximum, { integer = false } = {}) {
+  const trimmed = String(value).trim();
+  if (trimmed === "") return null;
+  const parsed = Number(trimmed);
+  if (!Number.isFinite(parsed)) return null;
+  const clamped = Math.min(maximum, Math.max(minimum, parsed));
+  return integer ? Math.round(clamped) : clamped;
+}
+
 function formatMilliseconds(value) {
   return value === null ? "-" : `${Math.round(value).toLocaleString()} ms`;
 }

@@ -690,12 +690,6 @@ function formatBenchmarkResultStatus(result, totalRuns) {
   }
 }
 
-function clampTemperature(value, minimum = 0, maximum = 2) {
-  const parsed = Number(value);
-  const clamped = Number.isFinite(parsed) ? parsed : minimum;
-  return Math.min(maximum, Math.max(minimum, clamped));
-}
-
 function buildBenchmarkRequestBody(modelId, config, includeUsage = true, provider = null) {
   // OpenAI newer endpoints reject the legacy `max_tokens` field; vLLM and most
   // OpenAI-compatible servers accept it. Pick the field name by provider so
@@ -705,18 +699,15 @@ function buildBenchmarkRequestBody(modelId, config, includeUsage = true, provide
     model: modelId,
     messages: buildBenchmarkMessages(config.prompt),
     stream: true,
-    temperature: config.temperature ?? 0,
     top_p: 1,
-    [outputLimitField]: config.maxTokens,
   };
+  if (config.temperature != null) body.temperature = config.temperature;
+  if (config.maxTokens != null) body[outputLimitField] = config.maxTokens;
   if (includeUsage) body.stream_options = { include_usage: true };
   if (config.disableThinking) {
     body.chat_template_kwargs = { enable_thinking: false };
   }
-  if (config.fixedOutput) {
-    body.min_tokens = config.maxTokens;
-    body.ignore_eos = true;
-  }
+  if (config.minTokens != null) body.min_tokens = config.minTokens;
   return body;
 }
 
@@ -839,13 +830,13 @@ function setStatus(message, isError = false) {
 const speedForm = document.querySelector("#speed-form");
 const speedRunsInput = document.querySelector("#speed-runs");
 const speedMaxTokensInput = document.querySelector("#speed-max-tokens");
+const speedMinTokensInput = document.querySelector("#speed-min-tokens");
 const speedTemperatureInput = document.querySelector("#speed-temperature");
 const speedConcurrencyInput = document.querySelector("#speed-concurrency");
 const speedTimeoutInput = document.querySelector("#speed-timeout");
 const speedPromptInput = document.querySelector("#speed-prompt");
 const speedLogConsoleInput = document.querySelector("#speed-log-console");
 const speedDisableThinkingInput = document.querySelector("#speed-disable-thinking");
-const speedFixedOutputInput = document.querySelector("#speed-fixed-output");
 const speedRequireServerTokensInput = document.querySelector("#speed-require-server-tokens");
 const speedConfigInputs = [...speedForm.querySelectorAll("input, textarea")];
 const speedRunButton = document.querySelector("#speed-run-button");
@@ -920,12 +911,10 @@ document.addEventListener("models:selection-changed", updateSpeedRunButtonState)
 document.addEventListener("models:selection-changed", () => {
   if (speedAbortController == null) renderSpeedGraphs();
 });
-[speedPromptInput, speedMaxTokensInput, speedTemperatureInput].forEach((input) => {
+[speedPromptInput, speedMaxTokensInput, speedMinTokensInput, speedTemperatureInput].forEach((input) => {
   input.addEventListener("input", renderSpeedRequestTemplate);
 });
-[speedDisableThinkingInput, speedFixedOutputInput].forEach((input) => {
-  input.addEventListener("change", renderSpeedRequestTemplate);
-});
+speedDisableThinkingInput.addEventListener("change", renderSpeedRequestTemplate);
 providerSelect.addEventListener("change", renderSpeedRequestTemplate);
 endpointInput.addEventListener("input", renderSpeedRequestTemplate);
 
@@ -943,14 +932,14 @@ speedForm.addEventListener("submit", async (event) => {
 
   const config = {
     runs: clampInteger(speedRunsInput.value, 1, 20),
-    maxTokens: clampInteger(speedMaxTokensInput.value, 32, 4096),
-    temperature: clampTemperature(speedTemperatureInput.value),
+    maxTokens: parseOptionalClampedNumber(speedMaxTokensInput.value, 32, 4096, { integer: true }),
+    minTokens: parseOptionalClampedNumber(speedMinTokensInput.value, 0, 4096, { integer: true }),
+    temperature: parseOptionalClampedNumber(speedTemperatureInput.value, 0, 2),
     concurrency: clampInteger(speedConcurrencyInput.value, 1, 12),
     timeoutMs: clampInteger(speedTimeoutInput.value, 10, 600) * 1000,
     prompt: speedPromptInput.value.trim(),
     logToConsole: speedLogConsoleInput.checked,
     disableThinking: speedDisableThinkingInput.checked,
-    fixedOutput: speedFixedOutputInput.checked,
     requireServerTokenCounts: speedRequireServerTokensInput.checked,
   };
   const connection = {
@@ -960,6 +949,10 @@ speedForm.addEventListener("submit", async (event) => {
   };
   if (!config.prompt) {
     setSpeedStatus("Enter a benchmark prompt.", true);
+    return;
+  }
+  if (config.maxTokens != null && config.minTokens != null && config.minTokens > config.maxTokens) {
+    setSpeedStatus("Min output tokens cannot exceed max output tokens.", true);
     return;
   }
 
@@ -1267,10 +1260,10 @@ function getSpeedSortValue(result, key) {
 function renderSpeedRequestTemplate() {
   const previewConfig = {
     prompt: speedPromptInput.value.trim(),
-    maxTokens: clampInteger(speedMaxTokensInput.value, 32, 4096),
-    temperature: clampTemperature(speedTemperatureInput.value),
+    maxTokens: parseOptionalClampedNumber(speedMaxTokensInput.value, 32, 4096, { integer: true }),
+    minTokens: parseOptionalClampedNumber(speedMinTokensInput.value, 0, 4096, { integer: true }),
+    temperature: parseOptionalClampedNumber(speedTemperatureInput.value, 0, 2),
     disableThinking: speedDisableThinkingInput.checked,
-    fixedOutput: speedFixedOutputInput.checked,
   };
   const endpointValue = endpointInput.value.trim() || "https://api.example.com/v1";
   let requestUrl;
