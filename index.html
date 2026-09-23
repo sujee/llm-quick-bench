@@ -12,6 +12,7 @@
     <script src="theme.js" defer></script>
     <script src="version.js" defer></script>
     <script src="bench-utils.js" defer></script>
+    <script src="presets.js" defer></script>
     <script src="speed-test1.js" defer></script>
     <script src="thinking-test1.js" defer></script>
     <script src="decode-test1.js" defer></script>
@@ -128,8 +129,15 @@
           <div class="field provider-field">
             <label for="provider">Provider</label>
             <select id="provider" name="provider">
-              <option value="nebius" selected>Nebius Token Factory</option>
+              <option value="baseten">Baseten</option>
               <option value="custom">Custom OpenAI-compatible</option>
+              <option value="fireworks">Fireworks AI</option>
+              <option value="lmstudio">LM Studio (local)</option>
+              <option value="nebius" selected>Nebius Token Factory</option>
+              <option value="ollamacloud">Ollama (cloud)</option>
+              <option value="ollama">Ollama (local)</option>
+              <option value="openai">OpenAI</option>
+              <option value="togetherai">Together AI</option>
             </select>
             <p class="hint">Choose a preset or enter an OpenAI-compatible URL.</p>
           </div>

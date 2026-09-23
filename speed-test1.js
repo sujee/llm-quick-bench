@@ -4,8 +4,8 @@
 // before thinking-test1.js) owns two things:
 //
 //   1. Shared model loading and selection state: the connection form, the
-//      models table, model-selection buttons, endpoint presets, and the
-//      model-info.json cross-reference. thinking-test1.js consumes these
+//      models table, model-selection buttons, and the model-info.json
+//      cross-reference. thinking-test1.js consumes these
 //      globals (form, providerSelect, endpointInput, apiKeyInput, models,
 //      modelsLoading, connectionControls, modelSelectionButtons,
 //      buildBenchmarkRequestBody, buildBenchmarkMessages,
@@ -15,7 +15,8 @@
 //      stacked panel per model with one tok/s bar per run plus an overall p50
 //      reference line across the completed runs.
 //
-// Endpoint/streaming/summary/format helpers live in bench-utils.js.
+// Endpoint presets live in presets.js; endpoint/streaming/summary/format
+// helpers live in bench-utils.js.
 
 const form = document.querySelector("#connection-form");
 const tabs = [...document.querySelectorAll('[role="tab"]')];
@@ -49,13 +50,6 @@ const modelSelectionButtons = [
   invertModelSelectionButton,
   selectNoModelsButton,
 ];
-
-const endpointPresets = {
-  nebius: {
-    endpoint: "https://api.tokenfactory.nebius.com/v1",
-    hint: "Nebius OpenAI-compatible API base URL.",
-  },
-};
 
 const columns = [
   { key: "selected", label: "Run" },
@@ -93,6 +87,7 @@ providerSelect.addEventListener("change", () => {
     endpointHint.textContent = preset.hint;
     return;
   }
+  endpointInput.value = "";
   endpointHint.textContent = "Enter a base URL or the full /models URL.";
   endpointInput.focus();
   endpointInput.select();
