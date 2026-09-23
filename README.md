@@ -8,6 +8,14 @@ It measures response speed, token throughput, latency, accuracy, token usage, an
 
 > **Note:** This is designed to be a quick benchmark—hence the name. It is not intended to replace comprehensive benchmarking tools.
 
+## Try it!
+
+
+[![Try LLM Quick Bench live](https://img.shields.io/badge/TRY_IT_LIVE-Launch_LLM_Quick_Bench-6c5ce7?style=for-the-badge)](https://sujee.github.io/llm-quick-bench/)
+
+Enter your endpoint URL and API key, load the available models, select the models you want to compare, and run a benchmark.
+
+
 ## Benchmarks
 
 - **Speed Test 1** — raw output-generation speed: one tokens-per-second value per measured run, charted per model.
@@ -20,13 +28,6 @@ It measures response speed, token throughput, latency, accuracy, token usage, an
 
 - The URL of your OpenAI-compatible endpoint
 - An API key for that endpoint
-
-## How to run it
-
-
-[![Try LLM Quick Bench live](https://img.shields.io/badge/TRY_IT_LIVE-Launch_LLM_Quick_Bench-6c5ce7?style=for-the-badge)](https://sujee.github.io/llm-quick-bench/)
-
-Enter your endpoint URL and API key, load the available models, select the models you want to compare, and run a benchmark.
 
 ## Dev Notes
 
