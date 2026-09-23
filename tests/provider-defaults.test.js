@@ -5,7 +5,7 @@ const test = require("node:test");
 const vm = require("node:vm");
 
 const projectRoot = path.join(__dirname, "..");
-const source = fs.readFileSync(path.join(projectRoot, "presets.js"), "utf8");
+const source = fs.readFileSync(path.join(projectRoot, "js", "presets.js"), "utf8");
 
 function loadPresets() {
   const context = vm.createContext({});

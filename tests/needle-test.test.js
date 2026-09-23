@@ -6,10 +6,10 @@ const vm = require("node:vm");
 
 const projectRoot = path.join(__dirname, "..");
 const html = fs.readFileSync(path.join(projectRoot, "index.html"), "utf8");
-const benchSource = fs.readFileSync(path.join(projectRoot, "bench-utils.js"), "utf8");
-const engineSource = fs.readFileSync(path.join(projectRoot, "context-bench.js"), "utf8");
-const needleSource = fs.readFileSync(path.join(projectRoot, "needle-test1.js"), "utf8");
-const prefillSource = fs.readFileSync(path.join(projectRoot, "prefill-test1.js"), "utf8");
+const benchSource = fs.readFileSync(path.join(projectRoot, "js", "bench-utils.js"), "utf8");
+const engineSource = fs.readFileSync(path.join(projectRoot, "js", "context-bench.js"), "utf8");
+const needleSource = fs.readFileSync(path.join(projectRoot, "js", "needle-test1.js"), "utf8");
+const prefillSource = fs.readFileSync(path.join(projectRoot, "js", "prefill-test1.js"), "utf8");
 
 function fakeElement(tag = "div") {
   const element = {
@@ -71,7 +71,7 @@ function loadBenchUtils() {
       setItem: () => {},
     },
   });
-  const source = fs.readFileSync(path.join(projectRoot, "bench-utils.js"), "utf8");
+  const source = fs.readFileSync(path.join(projectRoot, "js", "bench-utils.js"), "utf8");
   vm.runInContext(`${source}\nthis.__benchUtils = {
     CONTEXT_SECTORS,
     buildContextDocument,
@@ -110,13 +110,13 @@ test("Needle and Prefill tabs, panels, and scripts are wired into the page", () 
   // The engine must load before the two tests that instantiate it, and all
   // benchmark scripts keep their relative order.
   const scriptOrder = [
-    "bench-utils.js",
-    "speed-test1.js",
-    "thinking-test1.js",
-    "decode-test1.js",
-    "context-bench.js",
-    "needle-test1.js",
-    "prefill-test1.js",
+    "js/bench-utils.js",
+    "js/speed-test1.js",
+    "js/thinking-test1.js",
+    "js/decode-test1.js",
+    "js/context-bench.js",
+    "js/needle-test1.js",
+    "js/prefill-test1.js",
   ]
     .map((name) => ({ name, index: html.indexOf(`<script src="${name}"`) }));
   scriptOrder.forEach(({ name, index }) => assert.ok(index !== -1, `Missing script ${name}`));
@@ -851,14 +851,14 @@ test("the two long-context tests are cross-locked with each other and the other 
   assert.match(engineSource, /function isAnyContextBenchmarkRunning\(\)/);
 
   // speed-test1.js guards a typeof-safe running check and resets both tests.
-  const speedSource = fs.readFileSync(path.join(projectRoot, "speed-test1.js"), "utf8");
+  const speedSource = fs.readFileSync(path.join(projectRoot, "js", "speed-test1.js"), "utf8");
   assert.match(speedSource, /typeof isAnyContextBenchmarkRunning !== "function"/);
   assert.match(speedSource, /if \(typeof resetContextResults === "function"\) resetContextResults\(\);/);
   assert.match(speedSource, /if \(typeof updateContextRunButtons === "function"\) updateContextRunButtons\(isRunning\);/);
 
   // thinking-test1.js and decode-test1.js lock against both tests too.
-  const thinkingSource = fs.readFileSync(path.join(projectRoot, "thinking-test1.js"), "utf8");
-  const decodeSource = fs.readFileSync(path.join(projectRoot, "decode-test1.js"), "utf8");
+  const thinkingSource = fs.readFileSync(path.join(projectRoot, "js", "thinking-test1.js"), "utf8");
+  const decodeSource = fs.readFileSync(path.join(projectRoot, "js", "decode-test1.js"), "utf8");
   [thinkingSource, decodeSource].forEach((source) => {
     assert.match(source, /typeof isAnyContextBenchmarkRunning === "function" && isAnyContextBenchmarkRunning\(\)/);
     assert.match(source, /if \(typeof updateContextRunButtons === "function"\) updateContextRunButtons\(isRunning\);/);

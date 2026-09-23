@@ -7,7 +7,7 @@ const vm = require("node:vm");
 const projectRoot = path.join(__dirname, "..");
 
 test("application version is a positive integer and renders in the header", () => {
-  const source = fs.readFileSync(path.join(projectRoot, "version.js"), "utf8");
+  const source = fs.readFileSync(path.join(projectRoot, "js", "version.js"), "utf8");
   const versionElement = { textContent: "" };
   const context = vm.createContext({
     document: {
@@ -21,7 +21,7 @@ test("application version is a positive integer and renders in the header", () =
   assert.equal(versionElement.textContent, `v${context.__version}`);
 
   const html = fs.readFileSync(path.join(projectRoot, "index.html"), "utf8");
-  assert.match(html, /<script src="version\.js" defer><\/script>/);
+  assert.match(html, /<script src="js\/version\.js" defer><\/script>/);
   assert.match(html, /id="app-version"[\s\S]*assets\/github-badge\.svg/);
 });
 

@@ -5,18 +5,18 @@ const test = require("node:test");
 
 const projectRoot = path.join(__dirname, "..");
 const html = fs.readFileSync(path.join(projectRoot, "index.html"), "utf8");
-const benchSource = fs.readFileSync(path.join(projectRoot, "bench-utils.js"), "utf8");
-const decodeSource = fs.readFileSync(path.join(projectRoot, "decode-test1.js"), "utf8");
+const benchSource = fs.readFileSync(path.join(projectRoot, "js", "bench-utils.js"), "utf8");
+const decodeSource = fs.readFileSync(path.join(projectRoot, "js", "decode-test1.js"), "utf8");
 
 test("Decode Test tab, panel, and script are wired into the page", () => {
   assert.match(html, /id="decode-test-tab"[\s\S]*aria-controls="decode-test-panel"/);
   assert.match(html, /id="decode-test-panel"[\s\S]*aria-labelledby="decode-test-tab"/);
-  assert.match(html, /<script src="bench-utils\.js" defer><\/script>/);
-  assert.match(html, /<script src="decode-test1\.js" defer><\/script>/);
+  assert.match(html, /<script src="js\/bench-utils\.js" defer><\/script>/);
+  assert.match(html, /<script src="js\/decode-test1\.js" defer><\/script>/);
 
   // decode-test1.js reads globals owned by speed-test1.js/thinking-test1.js at
   // load time, so all four scripts must execute in this exact order.
-  const scriptOrder = ["bench-utils.js", "speed-test1.js", "thinking-test1.js", "decode-test1.js"]
+  const scriptOrder = ["js/bench-utils.js", "js/speed-test1.js", "js/thinking-test1.js", "js/decode-test1.js"]
     .map((name) => ({ name, index: html.indexOf(`<script src="${name}"`) }));
   scriptOrder.forEach(({ name, index }) => assert.ok(index !== -1, `Missing script ${name}`));
   for (let i = 1; i < scriptOrder.length; i += 1) {

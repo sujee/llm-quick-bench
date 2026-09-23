@@ -5,8 +5,8 @@ const test = require("node:test");
 
 const projectRoot = path.join(__dirname, "..");
 const html = fs.readFileSync(path.join(projectRoot, "index.html"), "utf8");
-const prefillSource = fs.readFileSync(path.join(projectRoot, "prefill-test1.js"), "utf8");
-const engineSource = fs.readFileSync(path.join(projectRoot, "context-bench.js"), "utf8");
+const prefillSource = fs.readFileSync(path.join(projectRoot, "js", "prefill-test1.js"), "utf8");
+const engineSource = fs.readFileSync(path.join(projectRoot, "js", "context-bench.js"), "utf8");
 
 test("Prefill Test form defaults follow the bench conventions", () => {
   const panel = html.slice(html.indexOf('id="prefill-test-panel"'));

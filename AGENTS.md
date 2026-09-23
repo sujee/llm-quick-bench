@@ -12,7 +12,7 @@ If the tests fail, fix the failure and rerun the full suite. If the suite cannot
 
 ## Versioning
 
-The application version is the positive integer `LLM_QUICK_BENCH_VERSION` value in `version.js`. It is displayed with a `v` prefix, such as `v2`.
+The application version is the positive integer `LLM_QUICK_BENCH_VERSION` value in `js/version.js`. It is displayed with a `v` prefix, such as `v2`.
 
 Do not increment the version for ordinary commits. Increment it by exactly one only when publishing. Use integers only—never semantic versions, decimals, or dotted version strings. A publish must contain exactly one version increment, regardless of how many commits it includes.
 

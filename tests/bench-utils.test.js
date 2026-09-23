@@ -63,7 +63,7 @@ function loadBenchUtils() {
       setItem: () => {},
     },
   });
-  const source = fs.readFileSync(path.join(__dirname, "..", "bench-utils.js"), "utf8");
+  const source = fs.readFileSync(path.join(__dirname, "..", "js", "bench-utils.js"), "utf8");
   vm.runInContext(`${source}\nthis.__benchUtils = {
     buildDecodeMatrixRows,
     buildDecodeMeasurement,

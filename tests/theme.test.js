@@ -5,7 +5,7 @@ const test = require("node:test");
 const vm = require("node:vm");
 
 const projectRoot = path.join(__dirname, "..");
-const themeSource = fs.readFileSync(path.join(projectRoot, "theme.js"), "utf8");
+const themeSource = fs.readFileSync(path.join(projectRoot, "js", "theme.js"), "utf8");
 
 function runThemeScript(savedTheme = null) {
   const listeners = {};
