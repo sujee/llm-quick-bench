@@ -2,7 +2,7 @@
 //
 // Turns a provider /models response into enriched model rows: the /models URL
 // builder, the provider fetch with error mapping and shape validation, the
-// response reader, the catalog cross-reference (models-generic.json plus any
+// response reader, the catalog cross-reference (data/models-generic.json plus any
 // provider-specific catalog, exact ids plus aliases) that fills in friendly
 // names, release dates, context windows, parameter counts, and prices, and the
 // embedding-model detection used to filter the list. Owns the shared MODELS
@@ -165,13 +165,13 @@ function hasAnyModelField(models, key) {
 // (friendly names, release dates, context windows, parameter counts, prices).
 // The fetch, the load-status message, and every error name the file only
 // through this constant.
-const MODELS_GENERIC_FILE = "models-generic.json";
+const MODELS_GENERIC_FILE = "data/models-generic.json";
 
 // Provider-specific catalogs layered over the shared catalog. Entries from
-// these files are appended after models-generic.json, so they take precedence
+// these files are appended after data/models-generic.json, so they take precedence
 // on matching ids and add provider-only details (such as OpenAI pricing).
 const MODELS_PROVIDER_FILES = {
-  openai: "models-openai.json",
+  openai: "data/models-openai.json",
 };
 
 function providerCatalogFile(provider) {
@@ -203,7 +203,7 @@ async function loadCatalogFile(filename) {
 
 // Loads the shared catalog plus the selected provider's catalog, then merges
 // them into one lookup index. The provider file is optional: custom endpoints
-// and providers without a dedicated catalog fall back to models-generic.json.
+// and providers without a dedicated catalog fall back to data/models-generic.json.
 async function loadModelReference(provider = null) {
   const files = [MODELS_GENERIC_FILE];
   const providerFile = providerCatalogFile(provider);

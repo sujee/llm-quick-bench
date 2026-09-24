@@ -17,7 +17,7 @@
 //      reference line across the completed runs.
 //
 // Endpoint presets live in presets.js; the model catalog pipeline (the
-// models-generic.json cross-reference) lives in model-loader.js;
+// data/models-generic.json cross-reference) lives in model-loader.js;
 // endpoint/streaming/summary/format helpers live in bench-utils.js.
 
 const form = document.querySelector("#connection-form");

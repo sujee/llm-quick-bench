@@ -214,7 +214,7 @@ test("model-loader.js owns the model pipeline and loads before speed-test1.js", 
   assert.match(speedSource, /enrichModels\(returnedModels, modelReference\)/);
 
   // The catalog filename literal is defined once in the pipeline.
-  assert.equal((loaderSource.match(/"models-generic\.json"/g) ?? []).length, 1);
+  assert.equal((loaderSource.match(/"data\/models-generic\.json"/g) ?? []).length, 1);
   assert.match(speedSource, /\$\{MODELS_GENERIC_FILE\}/);
 });
 
@@ -276,7 +276,7 @@ test("buildModelsUrl appends /models and adds verbose only for nebius", () => {
     loader.buildModelsUrl("https://api.example.com/v1/models", "custom"),
     "https://api.example.com/v1/models",
   );
-  assert.equal(loader.MODELS_GENERIC_FILE, "models-generic.json");
+  assert.equal(loader.MODELS_GENERIC_FILE, "data/models-generic.json");
 });
 
 test("readResponse parses JSON and reports empty or non-JSON bodies", async () => {
@@ -384,7 +384,7 @@ test("loadModelReference fetches the catalog constant and builds the lookup inde
 
   const index = await loader.loadModelReference();
 
-  assert.equal(calls[0].url, "models-generic.json");
+  assert.equal(calls[0].url, "data/models-generic.json");
   assert.equal(calls[0].options.headers.Accept, "application/json");
   assert.equal(typeof index.exact.has, "function");
   assert.equal(typeof index.aliases.has, "function");
@@ -398,7 +398,7 @@ test("loadModelReference reports unreadable, non-array, and invalid catalogs", a
   });
   await assert.rejects(
     offlineLoader.loadModelReference(),
-    /Unable to load models-generic\.json\. Serve the app over HTTP instead of opening index\.html directly\./,
+    /Unable to load data\/models-generic\.json\. Serve the app over HTTP instead of opening index\.html directly\./,
   );
 
   const notFoundLoader = loadModelLoader({
@@ -406,7 +406,7 @@ test("loadModelReference reports unreadable, non-array, and invalid catalogs", a
   });
   await assert.rejects(
     notFoundLoader.loadModelReference(),
-    /Unable to load models-generic\.json \(404\)\./,
+    /Unable to load data\/models-generic\.json \(404\)\./,
   );
 
   const invalidJsonLoader = loadModelLoader({
@@ -414,7 +414,7 @@ test("loadModelReference reports unreadable, non-array, and invalid catalogs", a
   });
   await assert.rejects(
     invalidJsonLoader.loadModelReference(),
-    /models-generic\.json contains invalid JSON\./,
+    /data\/models-generic\.json contains invalid JSON\./,
   );
 
   const notArrayLoader = loadModelLoader({
@@ -422,7 +422,7 @@ test("loadModelReference reports unreadable, non-array, and invalid catalogs", a
   });
   await assert.rejects(
     notArrayLoader.loadModelReference(),
-    /models-generic\.json must contain an array of models\./,
+    /data\/models-generic\.json must contain an array of models\./,
   );
 });
 
@@ -448,7 +448,7 @@ const PROVIDER_CATALOG = [
 test("providerCatalogFile maps known providers and returns null otherwise", () => {
   const loader = loadModelLoader();
 
-  assert.equal(loader.providerCatalogFile("openai"), "models-openai.json");
+  assert.equal(loader.providerCatalogFile("openai"), "data/models-openai.json");
   assert.equal(loader.providerCatalogFile("nebius"), null);
   assert.equal(loader.providerCatalogFile(null), null);
 });
@@ -459,14 +459,14 @@ test("loadModelReference merges the shared and provider catalogs", async () => {
     fetch: async (url) => {
       calls.push(url);
       return fakeResponse({
-        body: JSON.stringify(url === "models-openai.json" ? PROVIDER_CATALOG : []),
+        body: JSON.stringify(url === "data/models-openai.json" ? PROVIDER_CATALOG : []),
       });
     },
   });
 
   const index = await loader.loadModelReference("openai");
 
-  assert.deepEqual([...calls].sort(), ["models-generic.json", "models-openai.json"]);
+  assert.deepEqual([...calls].sort(), ["data/models-generic.json", "data/models-openai.json"]);
   const astra = loader.findModelReference("openai/gpt-6-astra", index);
   assert.equal(astra.name, "GPT-6 Astra");
   assert.equal(astra.aaIndex, 53);
@@ -483,7 +483,7 @@ test("loadModelReference skips the provider file for providers without one", asy
   });
 
   await loader.loadModelReference("nebius");
-  assert.deepEqual(calls, ["models-generic.json"]);
+  assert.deepEqual(calls, ["data/models-generic.json"]);
 });
 
 test("toTableRow falls back to catalog prices when the provider omits them", () => {
@@ -1066,7 +1066,7 @@ test("price helpers keep explicit per-million prices and scale tiny per-token on
 
 test("the shipped catalog resolves real provider model ids and slugs", () => {
   const loader = loadModelLoader();
-  const entries = JSON.parse(fs.readFileSync(path.join(projectRoot, "models-generic.json"), "utf8"));
+  const entries = JSON.parse(fs.readFileSync(path.join(projectRoot, "data", "models-generic.json"), "utf8"));
   const index = loader.buildModelReference(entries);
 
   const glm = loader.findModelReference("zai-org/GLM-5.3", index);

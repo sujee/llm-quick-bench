@@ -117,9 +117,9 @@ Run it against each provider, for example `node <script>.js openai` and `node <s
 
 ## Provider Model Catalogs
 
-Provider-specific metadata lives in the `MODELS_PROVIDER_FILES` map in `js/model-loader.js` (`openai` -> `models-openai.json`). Entries are layered after `models-generic.json` and win on matching ids.
+Provider-specific metadata lives in the `MODELS_PROVIDER_FILES` map in `js/model-loader.js` (`openai` -> `data/models-openai.json`). Entries are layered after `data/models-generic.json` and win on matching ids.
 
-To add or update a model, append an object to the JSON array in `models-openai.json`:
+To add or update a model, append an object to the JSON array in `data/models-openai.json`:
 
 ```json
 {
