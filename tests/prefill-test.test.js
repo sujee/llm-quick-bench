@@ -34,6 +34,11 @@ test("Prefill Test form defaults follow the bench conventions", () => {
   assert.match(prefillSource, /positionPercents: \[clampInteger\(prefillPositionInput\.value, 0, 100\)\]/);
   assert.match(prefillSource, /clampInteger\(prefillRunsInput\.value, 1, 20\)/);
   assert.match(prefillSource, /parseContextInputTokenOptions\(prefillSizesInput\?\.value\)/);
+  // Temperature is a provider-defaulted optional field (blank for OpenAI).
+  assert.match(panel, /id="prefill-temperature"[^>]*min="0" max="2" step="0\.1" value="0"/);
+  assert.match(prefillSource, /temperature: parseOptionalClampedNumber\(prefillTemperatureInput\.value, 0, 2\)/);
+  assert.match(prefillSource, /temperature: config\.temperature,/);
+  assert.match(engineSource, /temperature: config\.temperature,/);
 });
 
 test("Prefill Test headline is the effective input rate across sizes", () => {

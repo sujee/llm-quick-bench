@@ -34,12 +34,28 @@ test("provider request defaults resolve per provider and test", () => {
   );
   assert.deepEqual(
     plain(resolveTestRequestDefaults("decode", "openai")),
-    { disableThinking: false, fixedOutput: false },
+    { temperature: null, disableThinking: false, fixedOutput: false },
   );
   assert.deepEqual(
     plain(resolveTestRequestDefaults("decode", "nebius")),
-    { disableThinking: true, fixedOutput: true },
+    { temperature: 0, disableThinking: true, fixedOutput: true },
   );
-  assert.deepEqual(plain(resolveTestRequestDefaults("needle", "openai")), {});
+  assert.deepEqual(
+    plain(resolveTestRequestDefaults("thinking", "nebius")),
+    { temperature: 0, disableThinking: false },
+  );
+  assert.deepEqual(
+    plain(resolveTestRequestDefaults("thinking", "custom")),
+    { temperature: 0, disableThinking: false },
+  );
+  assert.deepEqual(
+    plain(resolveTestRequestDefaults("thinking", "openai")),
+    { temperature: null, disableThinking: false },
+  );
+  // The long-context tests expose only temperature, blank for OpenAI.
+  assert.deepEqual(plain(resolveTestRequestDefaults("needle", "nebius")), { temperature: 0 });
+  assert.deepEqual(plain(resolveTestRequestDefaults("needle", "openai")), { temperature: null });
+  assert.deepEqual(plain(resolveTestRequestDefaults("prefill", "nebius")), { temperature: 0 });
+  assert.deepEqual(plain(resolveTestRequestDefaults("prefill", "openai")), { temperature: null });
   assert.deepEqual(plain(resolveTestRequestDefaults("unknown", "openai")), {});
 });

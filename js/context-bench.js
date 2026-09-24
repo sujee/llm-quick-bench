@@ -86,7 +86,7 @@ function resetContextResults() {
 function updateContextRunButtons(extraDisabled = false) {
   const disabled = extraDisabled
     || isAnyContextBenchmarkRunning()
-    || (typeof models !== "undefined" && Array.isArray(models) && !models.some((model) => model.selected))
+    || (typeof MODELS !== "undefined" && Array.isArray(MODELS) && !MODELS.some((model) => model.selected))
     || (typeof modelsLoading !== "undefined" && modelsLoading);
   contextBenchmarks.forEach((benchmark) => {
     benchmark.runButton.disabled = disabled;
@@ -186,7 +186,7 @@ function createContextBenchmark({
   function getRunRows() {
     const results = run
       ? run.results
-      : models.filter((model) => model.selected).map((model) => ({
+      : MODELS.filter((model) => model.selected).map((model) => ({
         modelId: model.modelId,
         runs: [],
         errors: [],
@@ -241,6 +241,19 @@ function createContextBenchmark({
   }
   providerSelect.addEventListener("change", renderTemplate);
   endpointInput.addEventListener("input", renderTemplate);
+
+  // Provider defaults fill the temperature input (blank for OpenAI); a blank
+  // input is omitted from the request. Re-rendering is handled by the existing
+  // provider-change listener and the initial renderTemplate() call below.
+  function applyContextProviderDefaults(provider) {
+    if (!dom.temperatureInput) return;
+    const defaults = resolveTestRequestDefaults(key, provider);
+    if ("temperature" in defaults) {
+      dom.temperatureInput.value = defaults.temperature == null ? "" : String(defaults.temperature);
+    }
+  }
+  registerProviderDefaultsApplier(applyContextProviderDefaults);
+  applyContextProviderDefaults(providerSelect.value);
   document.addEventListener("models:selection-changed", updateButtonState);
   document.addEventListener("models:selection-changed", () => {
     if (abortController == null) renderBenchmarkSafely(renderResults, `${logName} selection change`);
@@ -264,7 +277,7 @@ function createContextBenchmark({
       setStatus(`${logName}: the other long-context test is already running.`, true);
       return;
     }
-    const selectedModels = models.filter((model) => model.selected);
+    const selectedModels = MODELS.filter((model) => model.selected);
     if (selectedModels.length === 0) {
       setStatus("Select at least one model to run.", true);
       return;
@@ -372,7 +385,7 @@ function createContextBenchmark({
   }
 
   function updateButtonState() {
-    dom.runButton.disabled = !models?.some((model) => model.selected)
+    dom.runButton.disabled = !MODELS?.some((model) => model.selected)
       || modelsLoading
       || abortController != null
       || (typeof speedAbortController !== "undefined" && speedAbortController != null)
@@ -388,7 +401,7 @@ function createContextBenchmark({
       || contextBenchmarks.some((benchmark) => benchmark.key !== key && benchmark.isRunning());
     dom.runButton.disabled = isActive
       || otherRunning
-      || !models?.some((model) => model.selected)
+      || !MODELS?.some((model) => model.selected)
       || modelsLoading;
     dom.runButton.firstElementChild.textContent = isActive ? "Running…" : "Run selected";
     dom.runButton.setAttribute("aria-busy", String(isActive));
@@ -397,25 +410,25 @@ function createContextBenchmark({
     // Lock shared connection + model selection so existing models/selecting operations stay frozen mid-run.
     loadButton.disabled = isActive;
     connectionControls.forEach((control) => { control.disabled = isActive; });
-    modelSelectionButtons.forEach((button) => { button.disabled = isActive; });
+    updateModelSelectionButtons(isActive);
     document.querySelectorAll("#models-body .model-select").forEach((checkbox) => { checkbox.disabled = isActive; });
     // Cross-lock the other benchmarks so only one runs at a time.
     if (typeof speedRunButton !== "undefined") {
       speedRunButton.disabled = isActive
         || speedAbortController != null
-        || !models.some((model) => model.selected)
+        || !MODELS.some((model) => model.selected)
         || modelsLoading;
     }
     if (typeof thinkingRunButton !== "undefined") {
       thinkingRunButton.disabled = isActive
         || thinkingAbortController != null
-        || !models.some((model) => model.selected)
+        || !MODELS.some((model) => model.selected)
         || modelsLoading;
     }
     if (typeof decodeRunButton !== "undefined") {
       decodeRunButton.disabled = isActive
         || decodeAbortController != null
-        || !models.some((model) => model.selected)
+        || !MODELS.some((model) => model.selected)
         || modelsLoading;
     }
     // Refresh the other long-context test's run button through its own state
@@ -491,7 +504,7 @@ function createContextBenchmark({
   }
 
   async function benchmarkModel(result, config, signal, connection, runSeed) {
-    const model = models.find((candidate) => candidate.modelId === result.modelId);
+    const model = MODELS.find((candidate) => candidate.modelId === result.modelId);
     const contextWindowTokens = Number.isFinite(model?.contextWindow) && model.contextWindow > 0
       ? model.contextWindow
       : null;
@@ -720,11 +733,11 @@ function createContextBenchmark({
       model: modelId,
       messages: [{ role: "user", content: taggedPrompt }],
       stream: true,
-      temperature: 0,
       top_p: 1,
+      temperature: config.temperature,
     };
     if (includeUsage) body.stream_options = { include_usage: true };
-    return body;
+    return stripBlankFields(body);
   }
 
   function renderResults() {
@@ -1098,7 +1111,7 @@ function createContextBenchmark({
     }
     const body = buildRequestBody(
       "<selected-model>",
-      {},
+      templateConfig,
       truncatePromptPreview(sampleTask.prompt),
       true,
     );

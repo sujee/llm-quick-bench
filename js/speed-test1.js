@@ -7,7 +7,7 @@
 //   1. Shared model loading and selection state: the connection form, the
 //      models table, model-selection buttons, and the load orchestration on
 //      top of the model-loader.js pipeline. thinking-test1.js consumes these
-//      globals (form, providerSelect, endpointInput, apiKeyInput, models,
+//      globals (form, providerSelect, endpointInput, apiKeyInput, MODELS,
 //      modelsLoading, connectionControls, modelSelectionButtons,
 //      buildBenchmarkRequestBody, buildBenchmarkMessages,
 //      formatBenchmarkResultStatus, isSpeedBenchmarkRunning, setStatus, …)
@@ -61,8 +61,10 @@ const columns = [
   { key: "contextWindow", label: "Context window" },
   { key: "parameterCount", label: "Parameters" },
   { key: "inputPrice", label: "Input / 1M" },
+  { key: "cachedInputPrice", label: "Cached input / 1M" },
+  { key: "cacheWritePrice", label: "Cache write / 1M" },
   { key: "outputPrice", label: "Output / 1M" },
-  { key: "blendedPrice", label: "Blended / 1M (3:1)" },
+  { key: "blendedPrice", label: "Blended / 1M (3 in + 1 out)" },
 ];
 const modelColumnPreferenceKey = "llm-quick-bench:model-columns:v1";
 const modelDataColumns = columns.filter((column) => column.key !== "selected");
@@ -70,7 +72,8 @@ let visibleModelColumns = loadVisibleColumnSet(
   modelColumnPreferenceKey,
   modelDataColumns.map((column) => column.key),
 );
-let models = [];
+// MODELS (js/model-loader.js) holds the loaded, enriched model rows; this file
+// writes them via setModels() and reads them directly.
 const modelTableSorter = createTableSorter({
   initialKey: "releaseDate",
   initialDirection: "descending",
@@ -176,7 +179,7 @@ form.addEventListener("submit", async (event) => {
   setLoading(true);
 
   try {
-    const modelReference = await loadModelReference();
+    const modelReference = await loadModelReference(providerSelect.value);
     const returnedModels = await fetchProviderModels(
       endpointInput.value,
       providerSelect.value,
@@ -185,23 +188,30 @@ form.addEventListener("submit", async (event) => {
     const {
       models: loadedModels,
       skippedEmbeddings,
+      skippedNonText,
       crossReferenced: crossReferencedModels,
     } = enrichModels(returnedModels, modelReference);
-    models = loadedModels;
+    setModels(loadedModels);
     // Print every model returned by the endpoint to the console, one per line,
-    // marking any that were filtered out (embedding models) and why.
+    // marking any that were filtered out (embedding, non-text, or known
+    // non-chat models) and why.
     console.group(`[LLM Quick Bench] ${returnedModels.length} model(s) returned by /models`);
     returnedModels.forEach((model, index) => {
       const id = model.id ?? model.model_id ?? model.name ?? "(no id)";
       const row = crossReferencedModels[index];
-      if (row?.isEmbedding) {
+      if (row?.isEmbedding || row?.isNonChat || !row?.isTextModel) {
+        const kind = row.isEmbedding
+          ? "embedding model"
+          : row.isNonChat
+            ? "non-chat model"
+            : `non-text model (${row.inputModalities.join("+")} → ${row.outputModalities.join("+")})`;
         const descriptor = model.type
           ?? model.model_type
           ?? model.task
           ?? model.metadata?.type
           ?? model.metadata?.task
           ?? model.pipeline_tag;
-        console.log(`${index + 1}. ${id}  [FILTERED - embedding model; descriptor: ${descriptor ?? "?"}]`);
+        console.log(`${index + 1}. ${id}  [FILTERED - ${kind}; descriptor: ${descriptor ?? "?"}]`);
       } else {
         console.log(`${index + 1}. ${id}`);
       }
@@ -216,16 +226,25 @@ form.addEventListener("submit", async (event) => {
     if (typeof resetContextResults === "function") resetContextResults();
     updateSelectionCount();
     updateModelResultsState();
-    const referenceMatches = models.filter((model) => model.referenceMatched).length;
-    const skippedMessage = skippedEmbeddings === 0
-      ? ""
-      : ` Skipped ${skippedEmbeddings} embedding model${skippedEmbeddings === 1 ? "" : "s"}.`;
+    const referenceMatches = MODELS.filter((model) => model.referenceMatched).length;
+    const providerCatalog = providerCatalogFile(providerSelect.value);
+    const catalogLabel = providerCatalog
+      ? `${MODELS_GENERIC_FILE} + ${providerCatalog}`
+      : MODELS_GENERIC_FILE;
+    const skippedMessage = [
+      skippedEmbeddings > 0
+        ? `Skipped ${skippedEmbeddings} embedding model${skippedEmbeddings === 1 ? "" : "s"}.`
+        : "",
+      skippedNonText > 0
+        ? `Skipped ${skippedNonText} non-text model${skippedNonText === 1 ? "" : "s"}.`
+        : "",
+    ].filter(Boolean).join(" ");
     setStatus(
-      `Loaded ${models.length} model${models.length === 1 ? "" : "s"}; ${referenceMatches} matched ${MODELS_GENERIC_FILE}.${skippedMessage}`,
+      `Loaded ${MODELS.length} model${MODELS.length === 1 ? "" : "s"}; ${referenceMatches} matched ${catalogLabel}.${skippedMessage ? ` ${skippedMessage}` : ""}`,
     );
     results.scrollIntoView({ behavior: "smooth", block: "start" });
   } catch (error) {
-    models = [];
+    setModels([]);
     if (typeof resetThinkingResults === "function") resetThinkingResults();
     if (typeof resetSpeedResults === "function") resetSpeedResults();
     if (typeof resetDecodeResults === "function") resetDecodeResults();
@@ -347,21 +366,35 @@ function renderTable() {
 }
 
 function updateModelResultsState() {
-  const hasModels = models.length > 0;
-  modelCount.textContent = `${models.length} model${models.length === 1 ? "" : "s"}`;
+  const hasModels = MODELS.length > 0;
+  modelCount.textContent = `${MODELS.length} model${MODELS.length === 1 ? "" : "s"}`;
   exportModelsCsvButton.disabled = !hasModels;
   exportModelsJsonButton.disabled = !hasModels;
-  modelSelectionButtons.forEach((button) => {
-    button.disabled = !hasModels || modelsLoading || isThinkingBenchmarkRunning() || isSpeedBenchmarkRunning();
-  });
+  updateModelSelectionButtons();
 }
 
-function getSortedModels(source = models) {
+// Single place that decides the shared model-selection buttons' disabled state.
+// "Select 5 newest" needs release dates and "Select top 5 intelligent" needs AA
+// index scores, so each is also disabled when no loaded model carries that
+// field. Every loading/running path calls this instead of toggling the buttons
+// directly, so those availability rules are never overwritten.
+function updateModelSelectionButtons(isRunning = false) {
+  const disabled = MODELS.length === 0
+    || modelsLoading
+    || isRunning
+    || isThinkingBenchmarkRunning()
+    || isSpeedBenchmarkRunning();
+  modelSelectionButtons.forEach((button) => { button.disabled = disabled; });
+  selectNewestModelsButton.disabled = disabled || !hasAnyModelField(MODELS, "releaseDate");
+  selectIntelligentModelsButton.disabled = disabled || !hasAnyModelField(MODELS, "aaIndex");
+}
+
+function getSortedModels(source = MODELS) {
   return modelTableSorter.sortRows(source, (model, key) => model[key]);
 }
 
 function getVisibleSortedModels() {
-  return getSortedModels(getFilteredModels(models));
+  return getSortedModels(getFilteredModels(MODELS));
 }
 
 function getFilteredModels(source) {
@@ -383,13 +416,13 @@ function modelMatchesSearch(model, query) {
 }
 
 function setAllModelsSelected(isSelected) {
-  const visibleSet = new Set(getFilteredModels(models));
+  const visibleSet = new Set(getFilteredModels(MODELS));
   applyModelSelection((model) => (visibleSet.has(model) ? isSelected : model.selected));
 }
 
 function selectTopModels(key, limit) {
   const selectedModels = new Set(
-    getFilteredModels(models)
+    getFilteredModels(MODELS)
       .filter((model) => !isMissing(model[key]))
       .sort((left, right) => (
         compareValues(right[key], left[key])
@@ -401,19 +434,19 @@ function selectTopModels(key, limit) {
 }
 
 function invertModelSelection() {
-  const visibleSet = new Set(getFilteredModels(models));
+  const visibleSet = new Set(getFilteredModels(MODELS));
   applyModelSelection((model) => (visibleSet.has(model) ? !model.selected : model.selected));
 }
 
 function applyModelSelection(shouldSelect) {
-  models.forEach((model, index) => { model.selected = shouldSelect(model, index); });
+  MODELS.forEach((model, index) => { model.selected = shouldSelect(model, index); });
   renderTable();
   updateSelectionCount();
 }
 
 function updateSelectionCount() {
-  const count = models.filter((model) => model.selected).length;
-  const hasModels = models.length > 0;
+  const count = MODELS.filter((model) => model.selected).length;
+  const hasModels = MODELS.length > 0;
   if (hasModels) {
     setStatus(`Selected ${count} model${count === 1 ? "" : "s"}`);
   }
@@ -423,8 +456,8 @@ function updateSelectionCount() {
 function notifySelectionChanged() {
   document.dispatchEvent(new CustomEvent("models:selection-changed", {
     detail: {
-      count: models.filter((model) => model.selected).length,
-      hasModels: models.length > 0,
+      count: MODELS.filter((model) => model.selected).length,
+      hasModels: MODELS.length > 0,
       modelsLoading,
     },
   }));
@@ -455,15 +488,15 @@ function buildBenchmarkRequestBody(modelId, config, includeUsage = true, provide
     messages: buildBenchmarkMessages(config.prompt),
     stream: true,
     top_p: 1,
+    temperature: config.temperature,
+    min_tokens: config.minTokens,
+    [outputLimitField]: config.maxTokens,
   };
-  if (config.temperature != null) body.temperature = config.temperature;
-  if (config.maxTokens != null) body[outputLimitField] = config.maxTokens;
   if (includeUsage) body.stream_options = { include_usage: true };
   if (config.disableThinking) {
     body.chat_template_kwargs = { enable_thinking: false };
   }
-  if (config.minTokens != null) body.min_tokens = config.minTokens;
-  return body;
+  return stripBlankFields(body);
 }
 
 function buildBenchmarkMessages(prompt) {
@@ -532,7 +565,7 @@ function formatValue(column, value) {
   if (isMissing(value)) return "-";
   if (column === "contextWindow") return formatTokenCount(value);
   if (column === "parameterCount") return formatParameterCount(value);
-  if (["inputPrice", "outputPrice", "blendedPrice"].includes(column)) {
+  if (["inputPrice", "cachedInputPrice", "cacheWritePrice", "outputPrice", "blendedPrice"].includes(column)) {
     return formatPrice(value);
   }
   return String(value);
@@ -569,7 +602,7 @@ function setLoading(isLoading) {
   loadButton.firstElementChild.textContent = isLoading ? "Loading…" : "Load models";
   loadButton.setAttribute("aria-busy", String(isLoading));
   connectionControls.forEach((control) => { control.disabled = isLoading; });
-  modelSelectionButtons.forEach((button) => { button.disabled = isLoading || models.length === 0; });
+  updateModelSelectionButtons();
   tableBody.querySelectorAll(".model-select").forEach((checkbox) => { checkbox.disabled = isLoading; });
   notifySelectionChanged();
 }
@@ -698,7 +731,7 @@ speedForm.addEventListener("submit", async (event) => {
     setSpeedStatus("Thinking Test 1 is already running.", true);
     return;
   }
-  const selectedModels = models.filter((model) => model.selected);
+  const selectedModels = MODELS.filter((model) => model.selected);
   if (selectedModels.length === 0) {
     setSpeedStatus("Select at least one model to run.", true);
     return;
@@ -797,7 +830,7 @@ speedForm.addEventListener("submit", async (event) => {
 });
 
 function updateSpeedRunButtonState() {
-  speedRunButton.disabled = !models?.some((model) => model.selected)
+  speedRunButton.disabled = !MODELS?.some((model) => model.selected)
     || modelsLoading
     || speedAbortController != null
     || (typeof thinkingAbortController !== "undefined" && thinkingAbortController != null)
@@ -808,7 +841,7 @@ function updateSpeedRunButtonState() {
 function setSpeedRunning(isRunning) {
   speedRunButton.disabled = isRunning
     || (typeof thinkingAbortController !== "undefined" && thinkingAbortController != null)
-    || !models?.some((model) => model.selected)
+    || !MODELS?.some((model) => model.selected)
     || modelsLoading;
   speedRunButton.firstElementChild.textContent = isRunning ? "Running…" : "Run selected";
   speedRunButton.setAttribute("aria-busy", String(isRunning));
@@ -816,18 +849,18 @@ function setSpeedRunning(isRunning) {
   speedConfigInputs.forEach((control) => { control.disabled = isRunning; });
   loadButton.disabled = isRunning;
   connectionControls.forEach((control) => { control.disabled = isRunning; });
-  modelSelectionButtons.forEach((button) => { button.disabled = isRunning; });
+  updateModelSelectionButtons(isRunning);
   document.querySelectorAll("#models-body .model-select").forEach((checkbox) => { checkbox.disabled = isRunning; });
   if (typeof thinkingRunButton !== "undefined") {
     thinkingRunButton.disabled = isRunning
       || thinkingAbortController != null
-      || !models.some((model) => model.selected)
+      || !MODELS.some((model) => model.selected)
       || modelsLoading;
   }
   if (typeof decodeRunButton !== "undefined") {
     decodeRunButton.disabled = isRunning
       || decodeAbortController != null
-      || !models.some((model) => model.selected)
+      || !MODELS.some((model) => model.selected)
       || modelsLoading;
   }
   // Lock or release the long-context tests' run buttons (needle + prefill).
@@ -1132,7 +1165,7 @@ function renderSpeedGraphs() {
       runs: result.runs,
       status: result.status,
     }))
-    : models.filter((model) => model.selected).map((model) => ({
+    : MODELS.filter((model) => model.selected).map((model) => ({
       modelId: model.modelId,
       runs: [],
       status: null,

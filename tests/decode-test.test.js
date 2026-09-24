@@ -33,6 +33,11 @@ test("Decode Test runs editable comma-separated output lengths with 100/500/1000
   assert.match(panel, /Generate a continuous stream of lowercase English words separated by single spaces\./);
   assert.match(panel, /id="decode-disable-thinking"[^>]*checked/);
   assert.match(panel, /id="decode-fixed-output"[^>]*checked/);
+  // Temperature is a provider-defaulted optional field (blank for OpenAI).
+  assert.match(panel, /id="decode-temperature"[^>]*min="0" max="2" step="0\.1" value="0"/);
+  assert.match(decodeSource, /function applyDecodeProviderDefaults[\s\S]*?"temperature" in defaults/);
+  assert.match(decodeSource, /temperature: currentDecodeTemperature\(\)/);
+  assert.match(decodeSource, /temperature: config\.temperature,/);
 
   assert.match(decodeSource, /const DECODE_DEFAULT_OUTPUT_TOKENS = \[100, 500, 1000\];/);
   assert.match(decodeSource, /function getDecodeOutputTokenOptions\(\)/);

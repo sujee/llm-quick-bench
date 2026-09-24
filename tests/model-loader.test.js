@@ -49,6 +49,12 @@ function fakeResponse({ ok = true, status = 200, statusText = "", body = "" } = 
   };
 }
 
+// Copies a value from the vm realm into this realm so deepStrictEqual can
+// compare plain objects and arrays without cross-realm prototype mismatches.
+function plain(value) {
+  return JSON.parse(JSON.stringify(value));
+}
+
 // Model-loader.js is a classic script: it uses bench-utils.js globals
 // (buildApiUrl/buildApiHeaders) and the browser `fetch`. Loading the real
 // bench-utils.js beside it exercises the actual URL/header helpers.
@@ -74,21 +80,34 @@ function loadModelLoader({ fetch: fetchImpl = () => Promise.reject(new Error("Un
   const source = fs.readFileSync(path.join(projectRoot, "js", "model-loader.js"), "utf8");
   vm.runInContext(`${source}
 this.__modelLoader = {
+  MODELS,
   MODELS_GENERIC_FILE,
+  MODELS_PROVIDER_FILES,
   buildModelsUrl,
   buildModelReference,
+  collectModalities,
+  declaredModalities,
   enrichModels,
   fetchProviderModels,
   findModelReference,
+  getModelModalities,
   getParameterCount,
   getPricePerMillion,
   isEmbeddingModel,
+  isNonChatModel,
+  isTextInTextOutModel,
+  loadCatalogFile,
   loadModelReference,
+  modalitiesFromId,
+  modalitiesFromTypeToken,
   normalizeModelId,
   normalizeReleaseDate,
   parseParameterCount,
   pricePerMillion,
+  providerCatalogFile,
   readResponse,
+  setModels,
+  stripModelDateSuffix,
   toNumber,
   toTableRow,
 };`, context);
@@ -177,8 +196,10 @@ test("model-loader.js owns the model pipeline and loads before speed-test1.js", 
   const pipelineFunctions = [
     "buildModelsUrl", "readResponse", "fetchProviderModels", "toTableRow", "enrichModels",
     "loadModelReference", "buildModelReference", "findModelReference", "normalizeModelId",
-    "isEmbeddingModel", "normalizeReleaseDate", "getParameterCount", "parseParameterCount",
-    "toNumber", "getPricePerMillion", "pricePerMillion",
+    "isEmbeddingModel", "isNonChatModel", "normalizeReleaseDate", "getParameterCount", "parseParameterCount",
+    "toNumber", "getPricePerMillion", "pricePerMillion", "stripModelDateSuffix",
+    "getModelModalities", "isTextInTextOutModel", "modalitiesFromTypeToken", "modalitiesFromId",
+    "collectModalities", "declaredModalities",
   ];
   pipelineFunctions.forEach((name) => {
     assert.match(loaderSource, new RegExp(`^(?:async )?function ${name}\\(`, "m"));
@@ -195,6 +216,48 @@ test("model-loader.js owns the model pipeline and loads before speed-test1.js", 
   // The catalog filename literal is defined once in the pipeline.
   assert.equal((loaderSource.match(/"models-generic\.json"/g) ?? []).length, 1);
   assert.match(speedSource, /\$\{MODELS_GENERIC_FILE\}/);
+});
+
+test("model-loader owns the shared MODELS array and setModels replaces it in place", () => {
+  const loader = loadModelLoader();
+  const reference = loader.MODELS;
+
+  assert.ok(Array.isArray(reference));
+  assert.equal(reference.length, 0);
+  assert.equal(loader.MODELS, reference);
+
+  loader.setModels([{ modelId: "a" }, { modelId: "b" }]);
+  assert.equal(loader.MODELS, reference); // same array, mutated not replaced
+  assert.deepEqual([...reference].map((model) => model.modelId), ["a", "b"]);
+
+  loader.setModels([{ modelId: "c" }]);
+  assert.deepEqual([...reference].map((model) => model.modelId), ["c"]);
+
+  loader.setModels(null);
+  assert.equal(reference.length, 0);
+});
+
+test("benchmark scripts read MODELS instead of a speed-test1-owned models global", () => {
+  const consumerFiles = [
+    "js/speed-test1.js",
+    "js/thinking-test1.js",
+    "js/decode-test1.js",
+    "js/context-bench.js",
+    "js/needle-test1.js",
+  ];
+  consumerFiles.forEach((file) => {
+    const source = fs.readFileSync(path.join(projectRoot, file), "utf8");
+    assert.doesNotMatch(
+      source,
+      /(^|[^.\w])models\.(filter|find|forEach|some|length|map)\b/,
+      `${file} should read MODELS, not the old models global`,
+    );
+    assert.match(source, /MODELS/, `${file} should reference MODELS`);
+  });
+
+  const speedSource = fs.readFileSync(path.join(projectRoot, "js", "speed-test1.js"), "utf8");
+  assert.doesNotMatch(speedSource, /^let models = \[\]/m);
+  assert.match(speedSource, /setModels\(loadedModels\)/);
 });
 
 test("buildModelsUrl appends /models and adds verbose only for nebius", () => {
@@ -363,6 +426,159 @@ test("loadModelReference reports unreadable, non-array, and invalid catalogs", a
   );
 });
 
+// A provider catalog entry carrying the OpenAI-style pricing fields the
+// provider file adds on top of the shared catalog.
+const PROVIDER_CATALOG = [
+  {
+    name: "GPT-6 Astra",
+    type: "image2text",
+    vendor: "openai",
+    aa_slug: "gpt-6-astra",
+    aa_intelligence_index: 53,
+    model_id: "openai/gpt-6-astra",
+    model_release_date: "2026-09-04",
+    context_window_K: 1025.390625,
+    input_price_per_million_tokens: 10,
+    cached_input_price_per_million_tokens: 1,
+    cache_write_price_per_million_tokens: 12.5,
+    output_price_per_million_tokens: 50,
+  },
+];
+
+test("providerCatalogFile maps known providers and returns null otherwise", () => {
+  const loader = loadModelLoader();
+
+  assert.equal(loader.providerCatalogFile("openai"), "models-openai.json");
+  assert.equal(loader.providerCatalogFile("nebius"), null);
+  assert.equal(loader.providerCatalogFile(null), null);
+});
+
+test("loadModelReference merges the shared and provider catalogs", async () => {
+  const calls = [];
+  const loader = loadModelLoader({
+    fetch: async (url) => {
+      calls.push(url);
+      return fakeResponse({
+        body: JSON.stringify(url === "models-openai.json" ? PROVIDER_CATALOG : []),
+      });
+    },
+  });
+
+  const index = await loader.loadModelReference("openai");
+
+  assert.deepEqual([...calls].sort(), ["models-generic.json", "models-openai.json"]);
+  const astra = loader.findModelReference("openai/gpt-6-astra", index);
+  assert.equal(astra.name, "GPT-6 Astra");
+  assert.equal(astra.aaIndex, 53);
+  assert.equal(astra.inputPrice, 10);
+  assert.equal(astra.outputPrice, 50);
+  assert.equal(astra.cachedInputPrice, 1);
+  assert.equal(astra.cacheWritePrice, 12.5);
+});
+
+test("loadModelReference skips the provider file for providers without one", async () => {
+  const calls = [];
+  const loader = loadModelLoader({
+    fetch: async (url) => { calls.push(url); return fakeResponse({ body: "[]" }); },
+  });
+
+  await loader.loadModelReference("nebius");
+  assert.deepEqual(calls, ["models-generic.json"]);
+});
+
+test("toTableRow falls back to catalog prices when the provider omits them", () => {
+  const loader = loadModelLoader();
+  const index = loader.buildModelReference(PROVIDER_CATALOG);
+
+  const row = loader.toTableRow({ id: "openai/gpt-6-astra" }, index);
+  assert.equal(row.inputPrice, 10);
+  assert.equal(row.outputPrice, 50);
+  assert.equal(row.cachedInputPrice, 1);
+  assert.equal(row.cacheWritePrice, 12.5);
+  assert.equal(row.blendedPrice, ((3 * 10) + 50) / 4);
+
+  // The provider's explicit prices still win over the catalog.
+  const providerPriced = loader.toTableRow({
+    id: "openai/gpt-6-astra",
+    input_price_per_million_tokens: 1,
+    output_price_per_million_tokens: 2,
+  }, index);
+  assert.equal(providerPriced.inputPrice, 1);
+  assert.equal(providerPriced.outputPrice, 2);
+});
+
+test("toTableRow price resolution supersedes the catalog field by field", () => {
+  const loader = loadModelLoader();
+  const index = loader.buildModelReference(PROVIDER_CATALOG);
+
+  // 1. Explicit provider per-million fields win over every catalog field, and
+  //    the blended price is recomputed from the provider's values.
+  const explicit = loader.toTableRow({
+    id: "openai/gpt-6-astra",
+    input_price_per_million_tokens: 1,
+    output_price_per_million_tokens: 2,
+    cached_input_price_per_million_tokens: 0.1,
+    cache_write_price_per_million_tokens: 0.2,
+  }, index);
+  assert.equal(explicit.inputPrice, 1);
+  assert.equal(explicit.outputPrice, 2);
+  assert.equal(explicit.cachedInputPrice, 0.1);
+  assert.equal(explicit.cacheWritePrice, 0.2);
+  assert.equal(explicit.blendedPrice, ((3 * 1) + 2) / 4);
+
+  // 2. A provider value of 0 means "free" and still supersedes the catalog.
+  const free = loader.toTableRow({
+    id: "openai/gpt-6-astra",
+    input_price_per_million_tokens: 0,
+    output_price_per_million_tokens: 0,
+  }, index);
+  assert.equal(free.inputPrice, 0);
+  assert.equal(free.outputPrice, 0);
+  assert.equal(free.blendedPrice, 0);
+  // Catalog-only fields remain available for the fields the provider omitted.
+  assert.equal(free.cachedInputPrice, 1);
+  assert.equal(free.cacheWritePrice, 12.5);
+
+  // 3. Omission falls back per field, so one model can mix the two sources and
+  //    the blended price reflects the final (mixed) input/output.
+  const mixed = loader.toTableRow({
+    id: "openai/gpt-6-astra",
+    output_price_per_million_tokens: 40, // input/cached/cache-write omitted
+  }, index);
+  assert.equal(mixed.inputPrice, 10);
+  assert.equal(mixed.outputPrice, 40);
+  assert.equal(mixed.cachedInputPrice, 1);
+  assert.equal(mixed.cacheWritePrice, 12.5);
+  assert.equal(mixed.blendedPrice, ((3 * 10) + 40) / 4);
+
+  // 4. A blank explicit field is "missing", not zero: it falls back to the
+  //    catalog rather than overriding it.
+  const blank = loader.toTableRow({
+    id: "openai/gpt-6-astra",
+    input_price_per_million_tokens: "",
+  }, index);
+  assert.equal(blank.inputPrice, 10);
+  assert.equal(blank.outputPrice, 50);
+
+  // 5. Nested provider pricing also supersedes the catalog; tiny per-token
+  //    values are scaled to per-million and used for the blended price.
+  const nested = loader.toTableRow({
+    id: "openai/gpt-6-astra",
+    pricing: { prompt: 0.000002, completion: 0.000006 },
+  }, index);
+  assert.equal(nested.inputPrice, 2);
+  assert.equal(nested.outputPrice, 6);
+  assert.equal(nested.blendedPrice, ((3 * 2) + 6) / 4);
+
+  // 6. An explicit per-million field wins over a nested ambiguous value.
+  const explicitOverNested = loader.toTableRow({
+    id: "openai/gpt-6-astra",
+    input_price_per_million_tokens: 5,
+    pricing: { prompt: 999 },
+  }, index);
+  assert.equal(explicitOverNested.inputPrice, 5);
+});
+
 test("normalizeModelId lowercases, collapses separators, and trims dashes", () => {
   const loader = loadModelLoader();
 
@@ -398,6 +614,41 @@ test("buildModelReference and findModelReference resolve ids, base names, and al
   assert.equal(loader.findModelReference("", index), null);
   assert.equal(loader.findModelReference(null, index), null);
   assert.equal(loader.findModelReference("not-in-the-catalog", index), null);
+});
+
+test("findModelReference strips ISO and legacy date suffixes to the base id", () => {
+  const loader = loadModelLoader();
+  const index = loader.buildModelReference(CATALOG);
+
+  // An ISO date suffix resolves to the catalogued base model.
+  assert.equal(loader.findModelReference("deepseek-ai/DeepSeek-V4-Pro-2099-12-31", index).name, "DeepSeek-V4-Pro");
+  assert.equal(loader.findModelReference("nvidia/Nemotron-3.5-Lightning-2026-08-11", index).name, "Nemotron-3.5-Lightning");
+
+  // OpenAI's legacy -MMDD suffix resolves too, and combines with "-fast".
+  assert.equal(loader.findModelReference("zai-org/GLM-5.3-0818", index).name, "GLM-5.3");
+  assert.equal(loader.findModelReference("zai-org/GLM-5.3-0818-fast", index).name, "GLM-5.3");
+
+  // A trailing number that is not a valid date is not stripped.
+  assert.equal(loader.findModelReference("zai-org/GLM-5.3-2048", index), null);
+  assert.equal(loader.findModelReference("zai-org/GLM-5.3-9999", index), null);
+
+  // The exact catalogued dated snapshot still wins over the base fallback.
+  assert.equal(loader.findModelReference("deepseek-ai/DeepSeek-V4-Pro-0813", index).aaIndex, 36);
+});
+
+test("stripModelDateSuffix recognises valid dates only", () => {
+  const loader = loadModelLoader();
+
+  assert.equal(loader.stripModelDateSuffix("gpt-4-1-2025-04-14"), "gpt-4-1");
+  assert.equal(loader.stripModelDateSuffix("gpt-3-5-turbo-0125"), "gpt-3-5-turbo");
+  assert.equal(loader.stripModelDateSuffix("gpt-3-5-turbo-1106"), "gpt-3-5-turbo");
+  assert.equal(loader.stripModelDateSuffix("gpt-4o-2024-08-06"), "gpt-4o");
+
+  // Not dates: unchanged.
+  assert.equal(loader.stripModelDateSuffix("glm-5-3"), "glm-5-3");
+  assert.equal(loader.stripModelDateSuffix("model-9999"), "model-9999");
+  assert.equal(loader.stripModelDateSuffix("model-2025"), "model-2025");
+  assert.equal(loader.stripModelDateSuffix("model-1349"), "model-1349");
 });
 
 test("a catalog alias shared by two entries is dropped, but exact ids still resolve", () => {
@@ -444,6 +695,185 @@ test("isEmbeddingModel flags embedding descriptors and the catalog type", () => 
   ]);
   const reference = loader.findModelReference("vendor/custom-reranker", referenceOnly);
   assert.equal(loader.isEmbeddingModel({ id: "vendor/custom-reranker" }, reference), true);
+});
+
+test("isNonChatModel flags audio, image, TTS, transcription, realtime, and legacy models", () => {
+  const loader = loadModelLoader();
+
+  ["tts-1", "whisper-1", "dall-e-3", "gpt-image-1", "gpt-realtime", "omni-moderation-latest",
+    "gpt-audio", "gpt-4o-transcribe", "gpt-4o-mini-transcribe", "sora-2", "babbage-002",
+    "davinci-002", "gpt-live-1", "vendor/some-reranker", "text-embedding-3-small"]
+    .forEach((id) => {
+      const row = loader.isNonChatModel({ id }, null);
+      // Embeddings are reported separately, so they are not counted as non-chat.
+      if (id === "text-embedding-3-small") assert.equal(row, false, `${id} should stay an embedding`);
+      else assert.equal(row, true, `${id} should be non-chat`);
+    });
+
+  // Chat models are never filtered, including multimodal ones whose catalog
+  // type is image2text and search-enabled chat variants.
+  ["gpt-4o", "gpt-5.4", "o3-mini", "gpt-4o-mini-search-preview", "gpt-5-chat-latest", "o1-pro"]
+    .forEach((id) => assert.equal(loader.isNonChatModel({ id }, null), false, `${id} should be chat`));
+  assert.equal(loader.isNonChatModel({ id: "gpt-6-astra" }, { type: "image2text" }), false);
+
+  // A catalog type alone can flag a non-chat model whose id gives no hint.
+  assert.equal(loader.isNonChatModel({ id: "vendor/voice" }, { type: "audio" }), true);
+  assert.equal(loader.isNonChatModel({ id: "vendor/voice" }, { type: "text2text" }), false);
+  assert.equal(loader.isNonChatModel({ id: "vendor/voice" }, { type: "embedding" }), false);
+});
+
+test("modalitiesFromTypeToken parses catalog and task tokens", () => {
+  const loader = loadModelLoader();
+
+  assert.deepEqual(plain(loader.modalitiesFromTypeToken("text2text")), { input: ["text"], output: ["text"] });
+  assert.deepEqual(plain(loader.modalitiesFromTypeToken("image2text")), { input: ["image", "text"], output: ["text"] });
+  assert.deepEqual(plain(loader.modalitiesFromTypeToken("embedding")), { input: ["text"], output: ["embedding"] });
+  assert.deepEqual(plain(loader.modalitiesFromTypeToken("embeddings")), { input: ["text"], output: ["embedding"] });
+  assert.deepEqual(plain(loader.modalitiesFromTypeToken("text->image")), { input: ["text"], output: ["image"] });
+  assert.deepEqual(plain(loader.modalitiesFromTypeToken("text-to-speech")), { input: ["text"], output: ["audio"] });
+  assert.deepEqual(plain(loader.modalitiesFromTypeToken("speech2text")), { input: ["audio"], output: ["text"] });
+  assert.deepEqual(plain(loader.modalitiesFromTypeToken("audio2audio")), { input: ["audio"], output: ["audio"] });
+  assert.deepEqual(plain(loader.modalitiesFromTypeToken("automatic-speech-recognition")), { input: ["audio"], output: ["text"] });
+  assert.deepEqual(plain(loader.modalitiesFromTypeToken("image-text-to-text")), { input: ["image", "text"], output: ["text"] });
+
+  // Unknown or missing tokens return null so the next source can be tried.
+  assert.equal(loader.modalitiesFromTypeToken("mystery"), null);
+  assert.equal(loader.modalitiesFromTypeToken(""), null);
+  assert.equal(loader.modalitiesFromTypeToken(null), null);
+});
+
+test("modalitiesFromId infers input/output modalities from the id", () => {
+  const loader = loadModelLoader();
+
+  assert.deepEqual(plain(loader.modalitiesFromId("text-embedding-3-large")), { input: ["text"], output: ["embedding"] });
+  assert.deepEqual(plain(loader.modalitiesFromId("gpt-4o-transcribe")), { input: ["audio"], output: ["text"] });
+  assert.deepEqual(plain(loader.modalitiesFromId("gpt-4o-mini-tts")), { input: ["text"], output: ["audio"] });
+  assert.deepEqual(plain(loader.modalitiesFromId("gpt-image-1")), { input: ["text"], output: ["image"] });
+  assert.deepEqual(plain(loader.modalitiesFromId("sora-2")), { input: ["text"], output: ["video"] });
+  assert.deepEqual(plain(loader.modalitiesFromId("omni-moderation-latest")), { input: ["text"], output: ["moderation"] });
+  assert.deepEqual(plain(loader.modalitiesFromId("gpt-realtime")), { input: ["audio", "text"], output: ["audio", "text"] });
+
+  // No signal: the caller falls back to the text-to-text default.
+  assert.equal(loader.modalitiesFromId("mystery-model"), null);
+  assert.equal(loader.modalitiesFromId("gpt-4o"), null);
+});
+
+test("getModelModalities prioritises declared, then type, then id, then defaults", () => {
+  const loader = loadModelLoader();
+
+  // Provider-declared arrays win over everything else.
+  assert.deepEqual(
+    plain(loader.getModelModalities({ id: "vendor/thing", input_modalities: ["text"], output_modalities: ["text"] }, { type: "embedding" })),
+    { input: ["text"], output: ["text"] },
+  );
+  // OpenRouter-style `architecture.modality` string.
+  assert.deepEqual(
+    plain(loader.getModelModalities({ id: "vendor/thing", architecture: { modality: "text->image" } }, null)),
+    { input: ["text"], output: ["image"] },
+  );
+  // Nebius-style compound input modality (`text+image->text`): a vision-capable
+  // chat model, so text input is preserved alongside image.
+  assert.deepEqual(
+    plain(loader.getModelModalities({ id: "moonshotai/Kimi-K2.6", architecture: { modality: "text+image->text" } }, null)),
+    { input: ["text", "image"], output: ["text"] },
+  );
+  assert.equal(
+    loader.isTextInTextOutModel({ id: "zai-org/GLM-5.3-Flash", architecture: { modality: "text+image->text" } }, null),
+    true,
+  );
+  // Unicode arrow.
+  assert.deepEqual(
+    plain(loader.getModelModalities({ id: "vendor/thing", architecture: { modality: "text → text" } }, null)),
+    { input: ["text"], output: ["text"] },
+  );
+  // A provider `type` wins over the catalog type.
+  assert.deepEqual(
+    plain(loader.getModelModalities({ id: "vendor/thing", type: "text2text" }, { type: "embedding" })),
+    { input: ["text"], output: ["text"] },
+  );
+  // Catalog type is used when the provider omits one.
+  assert.deepEqual(
+    plain(loader.getModelModalities({ id: "vendor/thing" }, { type: "image2text" })),
+    { input: ["image", "text"], output: ["text"] },
+  );
+  // Id heuristics come next.
+  assert.deepEqual(
+    plain(loader.getModelModalities({ id: "gpt-4o-transcribe" }, null)),
+    { input: ["audio"], output: ["text"] },
+  );
+  // With no signal at all, assume a text chat model.
+  assert.deepEqual(
+    plain(loader.getModelModalities({ id: "mystery-model" }, null)),
+    { input: ["text"], output: ["text"] },
+  );
+});
+
+test("getModelModalities fills a missing declared side from the inference chain", () => {
+  const loader = loadModelLoader();
+
+  // Input declared, output missing: the output is inferred from the type token.
+  assert.deepEqual(
+    plain(loader.getModelModalities({ id: "vendor/thing", input_modalities: ["text"] }, { type: "text2text" })),
+    { input: ["text"], output: ["text"] },
+  );
+  // Output declared, input missing: the input is inferred from the catalog type.
+  assert.deepEqual(
+    plain(loader.getModelModalities({ id: "vendor/thing", output_modalities: ["text"] }, { type: "image2text" })),
+    { input: ["image", "text"], output: ["text"] },
+  );
+  // Input declared, output missing, id heuristic says embedding -> still dropped.
+  assert.equal(
+    loader.isTextInTextOutModel({ id: "text-embedding-3-large", input_modalities: ["text"] }, null),
+    false,
+  );
+  // A declared image-only input is trusted, not widened to text.
+  assert.equal(
+    loader.isTextInTextOutModel({ id: "vendor/vision", input_modalities: ["image"], output_modalities: ["text"] }, null),
+    false,
+  );
+});
+
+test("enrichModels keeps a model that declares only one modality side", () => {
+  const loader = loadModelLoader();
+  const index = loader.buildModelReference([
+    { name: "Half Declared", model_id: "vendor/half-declared", type: "text2text" },
+  ]);
+
+  const result = loader.enrichModels(
+    [{ id: "vendor/half-declared", input_modalities: ["text"] }],
+    index,
+  );
+
+  assert.equal(result.models.length, 1);
+  assert.equal(result.skippedNonText, 0);
+  assert.deepEqual(plain(result.models[0].inputModalities), ["text"]);
+  assert.deepEqual(plain(result.models[0].outputModalities), ["text"]);
+});
+
+test("isTextInTextOutModel keeps text-input/text-output models only", () => {
+  const loader = loadModelLoader();
+
+  assert.equal(loader.isTextInTextOutModel({ id: "gpt-4o" }, null), true);
+  assert.equal(loader.isTextInTextOutModel({ id: "gpt-6-astra" }, { type: "image2text" }), true);
+  assert.equal(loader.isTextInTextOutModel({ id: "zai-org/GLM-5.3" }, { type: "text2text" }), true);
+  assert.equal(loader.isTextInTextOutModel({ id: "text-embedding-3-large" }, null), false);
+  assert.equal(loader.isTextInTextOutModel({ id: "gpt-4o-transcribe" }, null), false);
+  assert.equal(loader.isTextInTextOutModel({ id: "gpt-4o-mini-tts" }, null), false);
+  assert.equal(loader.isTextInTextOutModel({ id: "gpt-image-1" }, null), false);
+  assert.equal(loader.isTextInTextOutModel({ id: "sora-2" }, null), false);
+});
+
+test("collectModalities flattens arrays and compound separators", () => {
+  const loader = loadModelLoader();
+
+  assert.deepEqual(plain(loader.collectModalities([["text", "image"]])), ["text", "image"]);
+  assert.deepEqual(plain(loader.collectModalities(["text+image"])), ["text", "image"]);
+  assert.deepEqual(plain(loader.collectModalities(["text,image"])), ["text", "image"]);
+  assert.deepEqual(plain(loader.collectModalities(["text/image"])), ["text", "image"]);
+  assert.deepEqual(plain(loader.collectModalities(["TEXT", "Image"])), ["text", "image"]);
+  assert.deepEqual(plain(loader.collectModalities(["text", "text"])), ["text"]);
+  assert.deepEqual(plain(loader.collectModalities(["unknown"])), []);
+  assert.deepEqual(plain(loader.collectModalities([null, undefined])), []);
 });
 
 test("normalizeReleaseDate accepts ISO dates and epoch timestamps", () => {
@@ -530,27 +960,66 @@ test("toTableRow marks embedding models from the id or the catalog type", () => 
   assert.equal(loader.toTableRow({ id: "Qwen/Qwen3-Embedding-8B" }, index).isEmbedding, true);
 });
 
-test("enrichModels drops embedding rows and starts every kept model unselected", () => {
+test("enrichModels keeps only text-in/text-out models and starts them unselected", () => {
   const loader = loadModelLoader();
   const index = loader.buildModelReference(CATALOG);
 
   const result = loader.enrichModels(
-    [{ id: "zai-org/GLM-5.3" }, { id: "Qwen/Qwen3-Embedding-8B" }],
+    [
+      { id: "zai-org/GLM-5.3" },            // chat: kept
+      { id: "Qwen/Qwen3-Embedding-8B" },    // embedding: skipped
+      { id: "gpt-4o-transcribe" },          // audio in, text out: skipped
+      { id: "gpt-4o-mini-tts" },            // text in, audio out: skipped
+      { id: "gpt-realtime" },               // text in/out by modality, non-chat by blacklist
+      { id: "mystery-model" },              // no signal: assumed chat, kept
+    ],
     index,
   );
 
-  assert.equal(result.crossReferenced.length, 2);
-  assert.equal(result.models.length, 1);
+  assert.equal(result.crossReferenced.length, 6);
+  assert.equal(result.models.length, 2);
   assert.equal(result.skippedEmbeddings, 1);
-  assert.equal(result.models[0].modelId, "zai-org/GLM-5.3");
-  assert.equal(result.models[0].selected, false);
-  assert.equal(result.models[0].referenceMatched, true);
-  assert.equal(result.crossReferenced[1].isEmbedding, true);
+  assert.equal(result.skippedNonText, 3);
+  assert.deepEqual(plain(result.models.map((model) => model.modelId)), ["zai-org/GLM-5.3", "mystery-model"]);
+  result.models.forEach((model) => assert.equal(model.selected, false));
+
+  // Embedding rows are counted separately and never as non-text.
+  const embedding = loader.enrichModels([{ id: "Qwen/Qwen3-Embedding-8B" }], index);
+  assert.equal(embedding.skippedEmbeddings, 1);
+  assert.equal(embedding.skippedNonText, 0);
+  assert.equal(embedding.crossReferenced[0].isNonChat, false);
+
+  // The combined filter drops a model that is text-to-text by modality but a
+  // known non-chat endpoint.
+  const realtime = loader.enrichModels([{ id: "gpt-realtime" }], index);
+  assert.equal(realtime.skippedNonText, 1);
+  assert.equal(realtime.models.length, 0);
 
   const emptyResult = loader.enrichModels([], index);
   assert.equal(emptyResult.models.length, 0);
   assert.equal(emptyResult.skippedEmbeddings, 0);
+  assert.equal(emptyResult.skippedNonText, 0);
   assert.equal(emptyResult.crossReferenced.length, 0);
+});
+
+test("toTableRow exposes input/output modalities and the text-model verdict", () => {
+  const loader = loadModelLoader();
+  const index = loader.buildModelReference(CATALOG);
+
+  const chat = loader.toTableRow({ id: "zai-org/GLM-5.3" }, index);
+  assert.deepEqual(plain(chat.inputModalities), ["text"]);
+  assert.deepEqual(plain(chat.outputModalities), ["text"]);
+  assert.equal(chat.isTextModel, true);
+
+  const embedding = loader.toTableRow({ id: "Qwen/Qwen3-Embedding-8B" }, index);
+  assert.deepEqual(plain(embedding.inputModalities), ["text"]);
+  assert.deepEqual(plain(embedding.outputModalities), ["embedding"]);
+  assert.equal(embedding.isTextModel, false);
+
+  const transcribe = loader.toTableRow({ id: "gpt-4o-transcribe" }, loader.buildModelReference([]));
+  assert.deepEqual(plain(transcribe.inputModalities), ["audio"]);
+  assert.deepEqual(plain(transcribe.outputModalities), ["text"]);
+  assert.equal(transcribe.isTextModel, false);
 });
 
 test("getParameterCount and parseParameterCount handle catalog and provider units", () => {

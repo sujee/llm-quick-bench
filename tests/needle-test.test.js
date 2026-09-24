@@ -718,6 +718,14 @@ test("Needle Test form defaults and configuration follow the bench conventions",
     "DEFAULT_NEEDLE_POSITION_PERCENTS should appear only in its declaration and the empty-field fallback",
   );
   assert.match(needleSource, /clampInteger\(needleRunsInput\.value, 1, 20\)/);
+  // Temperature is a provider-defaulted optional field (blank for OpenAI).
+  assert.match(panel, /id="needle-temperature"[^>]*min="0" max="2" step="0\.1" value="0"/);
+  assert.match(needleSource, /temperature: parseOptionalClampedNumber\(needleTemperatureInput\.value, 0, 2\)/);
+  assert.match(needleSource, /temperature: config\.temperature,/);
+  assert.match(engineSource, /temperature: config\.temperature,/);
+  assert.match(engineSource, /function applyContextProviderDefaults\(provider\)[\s\S]*?"temperature" in defaults/);
+  assert.match(engineSource, /registerProviderDefaultsApplier\(applyContextProviderDefaults\)/);
+  assert.match(engineSource, /dom\.temperatureInput/);
 
   // Models run one at a time: the parallel-models field is gone and the
   // concurrency is hard-wired to 1, while the Prefill Test keeps its field.

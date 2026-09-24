@@ -59,6 +59,21 @@ function formatBenchmarkRequest(requestUrl, body) {
   ].join("\n");
 }
 
+// Removes blank top-level fields from a request body so they are never sent.
+// A blank field is null, undefined, or an empty/whitespace-only string; values
+// such as 0, false, or a populated object/array are kept. Nested payloads
+// (messages, stream_options, chat_template_kwargs) are left untouched.
+function stripBlankFields(body) {
+  if (body == null || typeof body !== "object" || Array.isArray(body)) return body;
+  const cleaned = {};
+  for (const [key, value] of Object.entries(body)) {
+    if (value === null || value === undefined) continue;
+    if (typeof value === "string" && value.trim() === "") continue;
+    cleaned[key] = value;
+  }
+  return cleaned;
+}
+
 async function runWithConcurrency(items, concurrency, worker) {
   let nextIndex = 0;
   let failure = null;
@@ -1809,9 +1824,11 @@ async function runStreamingChatCompletion({
 
   try {
     const requestUrl = buildChatCompletionsUrl(connection.endpoint);
+    // Nothing blank is ever sent, regardless of which benchmark built the body.
+    const cleanedBody = stripBlankFields(body);
     const shouldBuildDiagnosticText = captureExchange || config.logToConsole;
     const rawRequestText = shouldBuildDiagnosticText
-      ? formatBenchmarkRequest(requestUrl, body)
+      ? formatBenchmarkRequest(requestUrl, cleanedBody)
       : null;
     if (rawRequestText !== null) {
       logBenchmarkRaw(config, logName, `${modelId} · ${runLabel} · RAW REQUEST`, rawRequestText);
@@ -1820,9 +1837,9 @@ async function runStreamingChatCompletion({
     // Stream the body in chunks when upload telemetry is requested, so the
     // running row can show an input progress bar; otherwise send a plain
     // string body (identical wire behavior to before).
-    const bodyText = JSON.stringify(body);
+    const bodyText = JSON.stringify(cleanedBody);
     const useStreamUpload = liveState != null && STREAM_UPLOAD_SUPPORTED;
-    const requestBody = useStreamUpload
+    const uploadBody = useStreamUpload
       ? createChunkedUploadBody(bodyText, liveState)
       : bodyText;
     const requestInit = {
@@ -1831,7 +1848,7 @@ async function runStreamingChatCompletion({
         accept: "text/event-stream",
         contentType: "application/json",
       }),
-      body: requestBody,
+      body: uploadBody,
       signal: requestController.signal,
     };
     if (useStreamUpload) requestInit.duplex = "half";

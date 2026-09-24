@@ -26,6 +26,7 @@ const needleForm = document.querySelector("#needle-form");
 const needleFillInput = document.querySelector("#needle-fill");
 const needlePositionsInput = document.querySelector("#needle-positions");
 const needleRunsInput = document.querySelector("#needle-runs");
+const needleTemperatureInput = document.querySelector("#needle-temperature");
 const needleTimeoutInput = document.querySelector("#needle-timeout");
 const needleRequireServerTokensInput = document.querySelector("#needle-require-server-tokens");
 const needleLogConsoleInput = document.querySelector("#needle-log-console");
@@ -48,6 +49,7 @@ function getNeedleConfig() {
     runsPerCombo: clampInteger(needleRunsInput.value, 1, 20),
     fillPercent: getNeedleFillPercent(),
     positionPercents: getNeedlePositionOptions(),
+    temperature: parseOptionalClampedNumber(needleTemperatureInput.value, 0, 2),
     // Models run strictly one at a time: window-sized prefills are big, and
     // parallel traffic would contend for the endpoint and inflate TTFT.
     concurrency: 1,
@@ -61,7 +63,7 @@ function getNeedleConfig() {
 // window. A 0 size marks a model without window metadata, whose every
 // combination is skipped.
 function resolveNeedleSizes(config, modelId) {
-  const model = models.find((candidate) => candidate.modelId === modelId);
+  const model = MODELS.find((candidate) => candidate.modelId === modelId);
   const windowTokens = Number.isFinite(model?.contextWindow) && model.contextWindow > 0
     ? model.contextWindow
     : null;
@@ -109,10 +111,11 @@ const needleBenchmark = createContextBenchmark({
     sampleResponseCode: document.querySelector("#needle-sample-response-code"),
     sampleOutputNote: document.querySelector("#needle-sample-output-note"),
     sampleOutputCode: document.querySelector("#needle-sample-output-code"),
+    temperatureInput: needleTemperatureInput,
     // The positions field drives the matrix columns; the fill field changes
     // every preview row's size.
     positionsInput: needlePositionsInput,
-    templateInputs: [needleFillInput, needlePositionsInput],
+    templateInputs: [needleFillInput, needlePositionsInput, needleTemperatureInput],
     rowShapeInputs: [needleFillInput, needlePositionsInput],
   },
   columnPreferenceKey: "llm-quick-bench:needle-columns:v2",
@@ -128,11 +131,12 @@ const needleBenchmark = createContextBenchmark({
     // model against its own advertised window.
     inputTokenSizes: [contextInputTokensForWindow(NEEDLE_TEMPLATE_WINDOW_TOKENS, getNeedleFillPercent()) ?? 0],
     positionPercents: getNeedlePositionOptions(),
+    temperature: parseOptionalClampedNumber(needleTemperatureInput.value, 0, 2),
   }),
   resolveSizes: resolveNeedleSizes,
   skipNote: needleSkipNote,
   methodology: (config) => ({
-    temperature: 0,
+    temperature: config.temperature,
     topP: 1,
     operation: "needle retrieval accuracy by document position",
     prompt: "seeded filler log document with one access-code entry, regenerated per question",

@@ -44,10 +44,10 @@ const endpointPresets = {
 // option is omitted from the request body entirely.
 const TEST_REQUEST_DEFAULTS = {
   speed: { temperature: 0, minTokens: 1024, maxTokens: 1024, disableThinking: true },
-  thinking: { disableThinking: false },
-  decode: { disableThinking: true, fixedOutput: true },
-  needle: {},
-  prefill: {},
+  thinking: { temperature: 0, disableThinking: false },
+  decode: { temperature: 0, disableThinking: true, fixedOutput: true },
+  needle: { temperature: 0 },
+  prefill: { temperature: 0 },
 };
 
 // Per-provider overrides layered over TEST_REQUEST_DEFAULTS. Providers not
@@ -55,7 +55,10 @@ const TEST_REQUEST_DEFAULTS = {
 const PROVIDER_TEST_REQUEST_OVERRIDES = {
   openai: {
     speed: { temperature: null, minTokens: null, disableThinking: false },
-    decode: { disableThinking: false, fixedOutput: false },
+    thinking: { temperature: null },
+    decode: { temperature: null, disableThinking: false, fixedOutput: false },
+    needle: { temperature: null },
+    prefill: { temperature: null },
   },
 };
 

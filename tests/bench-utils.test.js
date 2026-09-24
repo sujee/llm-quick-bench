@@ -4,6 +4,9 @@ const path = require("node:path");
 const test = require("node:test");
 const vm = require("node:vm");
 
+const projectRoot = path.join(__dirname, "..");
+const benchSource = fs.readFileSync(path.join(projectRoot, "js", "bench-utils.js"), "utf8");
+
 function fakeElement(tag = "div") {
   const element = {
     tagName: tag.toUpperCase(),
@@ -88,6 +91,7 @@ function loadBenchUtils() {
     runStreamingChatCompletion,
     runWithConcurrency,
     splitCompletionTokens,
+    stripBlankFields,
     summarizeDecodeRuns,
     summarizeRunThinkingAccuracy,
     summarizeRuns,
@@ -1289,4 +1293,103 @@ test("streaming completion estimates missing usage when allowed", async () => {
   assert.equal(stream.measurement.completionTokenCountEstimated, true);
   assert.ok(stream.measurement.promptTokens > 0);
   assert.ok(stream.measurement.completionTokens > 0);
+});
+
+test("stripBlankFields drops blank values but keeps zero, false, and nested payloads", () => {
+  const { utils } = loadBenchUtils();
+
+  const cleaned = JSON.parse(JSON.stringify(utils.stripBlankFields({
+    model: "test-model",
+    temperature: null,
+    max_tokens: undefined,
+    prompt: "",
+    suffix: "   ",
+    top_p: 0,
+    stream: false,
+    messages: [{ role: "user", content: "hi" }],
+    chat_template_kwargs: { enable_thinking: false },
+  })));
+  assert.deepEqual(cleaned, {
+    model: "test-model",
+    top_p: 0,
+    stream: false,
+    messages: [{ role: "user", content: "hi" }],
+    chat_template_kwargs: { enable_thinking: false },
+  });
+
+  // Non-plain objects pass through untouched.
+  assert.equal(utils.stripBlankFields(null), null);
+  assert.equal(utils.stripBlankFields("x"), "x");
+  assert.deepEqual(Array.from(utils.stripBlankFields([1, 2])), [1, 2]);
+});
+
+test("empty field values are not sent to the API", async () => {
+  const { context, utils } = loadBenchUtils();
+  let sentBody = null;
+  const sse = [
+    'data: {"choices":[{"delta":{"content":"hi"}}]}',
+    "",
+    'data: {"choices":[],"usage":{"prompt_tokens":3,"completion_tokens":1}}',
+    "",
+    "data: [DONE]",
+    "",
+  ].join("\n");
+  context.fetch = async (url, options) => {
+    sentBody = JSON.parse(options.body);
+    return new Response(sse, {
+      status: 200,
+      headers: { "content-type": "text/event-stream" },
+    });
+  };
+
+  const stream = await utils.runStreamingChatCompletion({
+    modelId: "test-model",
+    config: { logToConsole: false, requireServerTokenCounts: true, timeoutMs: 1000 },
+    outerSignal: new AbortController().signal,
+    runLabel: "run-1",
+    connection: { endpoint: "https://example.test/v1", apiKey: "secret" },
+    body: {
+      model: "test-model",
+      messages: [{ role: "user", content: "hi" }],
+      // Every blank shape must be dropped.
+      temperature: null,
+      min_tokens: undefined,
+      prompt: "",
+      suffix: "   ",
+      // Non-blank values must survive, including falsy ones.
+      top_p: 1,
+      max_completion_tokens: 0,
+      stream: false,
+    },
+    captureExchange: true,
+    logName: "test",
+  });
+
+  // The bytes sent over the wire omit every blank field.
+  ["temperature", "min_tokens", "prompt", "suffix"].forEach((key) => {
+    assert.equal(key in sentBody, false, `${key} should not be sent`);
+  });
+  assert.deepEqual(sentBody, {
+    model: "test-model",
+    messages: [{ role: "user", content: "hi" }],
+    top_p: 1,
+    max_completion_tokens: 0,
+    stream: false,
+  });
+
+  // The captured diagnostic request matches what was actually sent.
+  assert.doesNotMatch(stream.request, /temperature|min_tokens|suffix/);
+  assert.match(stream.request, /"top_p": 1/);
+});
+
+test("every benchmark request builder strips blank fields before sending", () => {
+  assert.match(benchSource, /const cleanedBody = stripBlankFields\(body\);/);
+  ["js/speed-test1.js", "js/thinking-test1.js", "js/decode-test1.js", "js/context-bench.js"].forEach((file) => {
+    const source = fs.readFileSync(path.join(projectRoot, file), "utf8");
+    assert.match(
+      source,
+      /return stripBlankFields\(body\);/,
+      `${file} should route its request body through stripBlankFields`,
+    );
+  });
 });

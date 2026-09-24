@@ -27,6 +27,7 @@ const DECODE_DEFAULT_OUTPUT_TOKENS = [100, 500, 1000];
 const decodeForm = document.querySelector("#decode-form");
 const decodeLengthsInput = document.querySelector("#decode-lengths");
 const decodeRunsInput = document.querySelector("#decode-runs");
+const decodeTemperatureInput = document.querySelector("#decode-temperature");
 const decodeConcurrencyInput = document.querySelector("#decode-concurrency");
 const decodeTimeoutInput = document.querySelector("#decode-timeout");
 const decodePromptInput = document.querySelector("#decode-prompt");
@@ -37,6 +38,9 @@ const decodeLogConsoleInput = document.querySelector("#decode-log-console");
 
 function applyDecodeProviderDefaults(provider) {
   const defaults = resolveTestRequestDefaults("decode", provider);
+  if ("temperature" in defaults) {
+    decodeTemperatureInput.value = defaults.temperature == null ? "" : String(defaults.temperature);
+  }
   if ("disableThinking" in defaults) {
     decodeDisableThinkingInput.checked = Boolean(defaults.disableThinking);
   }
@@ -46,6 +50,12 @@ function applyDecodeProviderDefaults(provider) {
   renderDecodeRequestTemplate();
 }
 registerProviderDefaultsApplier(applyDecodeProviderDefaults);
+
+// Temperature is an optional request field: the provider default fills the
+// input (blank for OpenAI), and a blank input is omitted from the request.
+function currentDecodeTemperature() {
+  return parseOptionalClampedNumber(decodeTemperatureInput.value, 0, 2);
+}
 
 // Exclude any control that is disabled/read-only in the markup so toggling the
 // form back on after a run does not enable it.
@@ -152,7 +162,7 @@ document.addEventListener("models:selection-changed", updateDecodeRunButtonState
 document.addEventListener("models:selection-changed", () => {
   if (decodeAbortController == null) renderDecodeResults();
 });
-[decodeLengthsInput, decodePromptInput, decodeDisableThinkingInput, decodeFixedOutputInput].forEach((control) => {
+[decodeLengthsInput, decodePromptInput, decodeTemperatureInput, decodeDisableThinkingInput, decodeFixedOutputInput].forEach((control) => {
   control.addEventListener("input", renderDecodeRequestTemplate);
   control.addEventListener("change", renderDecodeRequestTemplate);
 });
@@ -175,7 +185,7 @@ decodeForm.addEventListener("submit", async (event) => {
     setDecodeStatus("Thinking Test 1 is already running.", true);
     return;
   }
-  const selectedModels = models.filter((model) => model.selected);
+  const selectedModels = MODELS.filter((model) => model.selected);
   if (selectedModels.length === 0) {
     setDecodeStatus("Select at least one model to run.", true);
     return;
@@ -193,6 +203,7 @@ decodeForm.addEventListener("submit", async (event) => {
     runsPerConfig,
     runs: runsPerConfig * outputTokenLengths.length,
     outputTokenLengths: [...outputTokenLengths],
+    temperature: currentDecodeTemperature(),
     concurrency: clampInteger(decodeConcurrencyInput.value, 1, 12),
     timeoutMs: clampInteger(decodeTimeoutInput.value, 10, 600) * 1000,
     prompt,
@@ -216,7 +227,7 @@ decodeForm.addEventListener("submit", async (event) => {
     config,
     runSeed,
     methodology: {
-      temperature: 0,
+      temperature: config.temperature,
       topP: 1,
       prompt: "short fixed prompt requesting a continuous stream of lowercase words",
       outputLengths: config.outputTokenLengths.join(", ") + " tokens",
@@ -291,7 +302,7 @@ function isDecodeBenchmarkRunning() {
 }
 
 function updateDecodeRunButtonState() {
-  decodeRunButton.disabled = !models?.some((model) => model.selected)
+  decodeRunButton.disabled = !MODELS?.some((model) => model.selected)
     || modelsLoading
     || decodeAbortController != null
     || (typeof speedAbortController !== "undefined" && speedAbortController != null)
@@ -305,7 +316,7 @@ function setDecodeRunning(isRunning) {
     || (typeof isAnyContextBenchmarkRunning === "function" && isAnyContextBenchmarkRunning());
   decodeRunButton.disabled = isRunning
     || otherRunning
-    || !models?.some((model) => model.selected)
+    || !MODELS?.some((model) => model.selected)
     || modelsLoading;
   decodeRunButton.firstElementChild.textContent = isRunning ? "Running…" : "Run selected";
   decodeRunButton.setAttribute("aria-busy", String(isRunning));
@@ -313,18 +324,18 @@ function setDecodeRunning(isRunning) {
   decodeConfigInputs.forEach((control) => { control.disabled = isRunning; });
   loadButton.disabled = isRunning;
   connectionControls.forEach((control) => { control.disabled = isRunning; });
-  modelSelectionButtons.forEach((button) => { button.disabled = isRunning; });
+  updateModelSelectionButtons(isRunning);
   document.querySelectorAll("#models-body .model-select").forEach((checkbox) => { checkbox.disabled = isRunning; });
   if (typeof speedRunButton !== "undefined") {
     speedRunButton.disabled = isRunning
       || speedAbortController != null
-      || !models.some((model) => model.selected)
+      || !MODELS.some((model) => model.selected)
       || modelsLoading;
   }
   if (typeof thinkingRunButton !== "undefined") {
     thinkingRunButton.disabled = isRunning
       || thinkingAbortController != null
-      || !models.some((model) => model.selected)
+      || !MODELS.some((model) => model.selected)
       || modelsLoading;
   }
   // Lock or release the long-context tests' run buttons (needle + prefill).
@@ -343,8 +354,8 @@ function buildDecodeRequestBody(modelId, config, includeUsage = true, provider =
     model: modelId,
     messages: buildBenchmarkMessages(config.prompt),
     stream: true,
-    temperature: 0,
     top_p: 1,
+    temperature: config.temperature,
     [outputLimitField]: outputTokens,
   };
   if (includeUsage) body.stream_options = { include_usage: true };
@@ -355,7 +366,7 @@ function buildDecodeRequestBody(modelId, config, includeUsage = true, provider =
     body.min_tokens = outputTokens;
     body.ignore_eos = true;
   }
-  return body;
+  return stripBlankFields(body);
 }
 
 async function benchmarkDecodeModel(result, config, signal, connection) {
@@ -482,7 +493,7 @@ function getActiveDecodeOutputTokenOptions() {
 function getDecodeRunRows() {
   const results = decodeRun
     ? decodeRun.results
-    : models.filter((model) => model.selected).map((model) => ({
+    : MODELS.filter((model) => model.selected).map((model) => ({
       modelId: model.modelId,
       runs: [],
       errors: [],
@@ -565,8 +576,8 @@ function renderDecodeMatrix() {
 // "Nemotron-3.5-Lightning" -> "Nemotron 3.5 Lightning"), falling back to the
 // model id without its vendor prefix. Tooltips still show the full model id.
 function shortModelLabel(modelId) {
-  const match = typeof models !== "undefined"
-    ? models.find((model) => model.modelId === modelId)
+  const match = typeof MODELS !== "undefined"
+    ? MODELS.find((model) => model.modelId === modelId)
     : null;
   const source = match?.name || String(modelId).split("/").at(-1);
   return String(source).replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
@@ -1010,6 +1021,7 @@ function renderDecodeRequestTemplate() {
   const outputTokenLengths = getDecodeOutputTokenOptions();
   const previewConfig = {
     prompt: decodePromptInput.value.trim() || DECODE_PROMPT,
+    temperature: currentDecodeTemperature(),
     disableThinking: decodeDisableThinkingInput.checked,
     fixedOutput: decodeFixedOutputInput.checked,
     outputTokenLengths,

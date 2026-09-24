@@ -465,6 +465,11 @@ Continue generating words without stopping or concluding until the generation is
             <p class="hint">Markdown is the friendliest default.</p>
           </div>
           <div class="field">
+            <label for="thinking-temperature">Temperature</label>
+            <input id="thinking-temperature" type="number" min="0" max="2" step="0.1" value="0" />
+            <p class="hint">Sampling temperature; 0 keeps runs deterministic. Left blank for OpenAI, which does not accept it.</p>
+          </div>
+          <div class="field">
             <label for="thinking-concurrency">Parallel models to test</label>
             <input id="thinking-concurrency" type="number" min="1" max="12" value="3" required />
             <p class="hint">Questions for one model stay serial.</p>
@@ -653,6 +658,11 @@ Output nothing else. Do not include reasoning, explanations, labels, markdown, o
             <label for="decode-runs">Runs per output length</label>
             <input id="decode-runs" type="number" min="1" max="20" value="5" required />
             <p class="hint">Per model per length, after one excluded warm-up.</p>
+          </div>
+          <div class="field">
+            <label for="decode-temperature">Temperature</label>
+            <input id="decode-temperature" type="number" min="0" max="2" step="0.1" value="0" />
+            <p class="hint">Sampling temperature; 0 keeps runs deterministic. Left blank for OpenAI, which does not accept it.</p>
           </div>
           <div class="field">
             <label for="decode-concurrency">Parallel models to test</label>
@@ -854,6 +864,11 @@ Output nothing else. Do not include reasoning, explanations, labels, markdown, o
             <p class="hint">Per model per position, after one excluded warm-up.</p>
           </div>
           <div class="field">
+            <label for="needle-temperature">Temperature</label>
+            <input id="needle-temperature" type="number" min="0" max="2" step="0.1" value="0" />
+            <p class="hint">Sampling temperature; 0 keeps runs deterministic. Left blank for OpenAI, which does not accept it.</p>
+          </div>
+          <div class="field">
             <label for="needle-timeout">Timeout / request (sec)</label>
             <input id="needle-timeout" type="number" min="10" max="600" value="300" required />
             <p class="hint">Long prompts prefill slowly; keep this generous.</p>
@@ -1037,6 +1052,11 @@ Output nothing else. Do not include reasoning, explanations, labels, markdown, o
             <label for="prefill-runs">Number of runs per size</label>
             <input id="prefill-runs" type="number" min="1" max="20" value="1" required />
             <p class="hint">Per model per input size, after one excluded warm-up.</p>
+          </div>
+          <div class="field">
+            <label for="prefill-temperature">Temperature</label>
+            <input id="prefill-temperature" type="number" min="0" max="2" step="0.1" value="0" />
+            <p class="hint">Sampling temperature; 0 keeps runs deterministic. Left blank for OpenAI, which does not accept it.</p>
           </div>
           <div class="field">
             <label for="prefill-concurrency">Parallel models to test</label>

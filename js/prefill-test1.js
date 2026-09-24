@@ -22,6 +22,7 @@ const prefillForm = document.querySelector("#prefill-form");
 const prefillSizesInput = document.querySelector("#prefill-sizes");
 const prefillPositionInput = document.querySelector("#prefill-position");
 const prefillRunsInput = document.querySelector("#prefill-runs");
+const prefillTemperatureInput = document.querySelector("#prefill-temperature");
 const prefillConcurrencyInput = document.querySelector("#prefill-concurrency");
 const prefillTimeoutInput = document.querySelector("#prefill-timeout");
 const prefillRequireServerTokensInput = document.querySelector("#prefill-require-server-tokens");
@@ -41,6 +42,7 @@ function getPrefillConfig() {
     runsPerCombo: clampInteger(prefillRunsInput.value, 1, 20),
     inputTokenSizes: getPrefillSizeOptions(),
     positionPercents: [clampInteger(prefillPositionInput.value, 0, 100)],
+    temperature: parseOptionalClampedNumber(prefillTemperatureInput.value, 0, 2),
     concurrency: clampInteger(prefillConcurrencyInput.value, 1, 12),
     timeoutMs: clampInteger(prefillTimeoutInput.value, 10, 600) * 1000,
     logToConsole: prefillLogConsoleInput.checked,
@@ -77,15 +79,16 @@ createContextBenchmark({
     sampleResponseCode: document.querySelector("#prefill-sample-response-code"),
     sampleOutputNote: document.querySelector("#prefill-sample-output-note"),
     sampleOutputCode: document.querySelector("#prefill-sample-output-code"),
+    temperatureInput: prefillTemperatureInput,
     // The sizes field changes the template and every preview row.
-    templateInputs: [prefillSizesInput, prefillPositionInput],
+    templateInputs: [prefillSizesInput, prefillPositionInput, prefillTemperatureInput],
     rowShapeInputs: [prefillSizesInput],
   },
   columnPreferenceKey: "llm-quick-bench:prefill-columns:v2",
   getConfig: getPrefillConfig,
   getTemplateConfig: getPrefillConfig,
   methodology: (config) => ({
-    temperature: 0,
+    temperature: config.temperature,
     topP: 1,
     operation: "long-prompt prefill speed across input sizes",
     prompt: "seeded filler log document with one access-code entry near the end, regenerated per question",

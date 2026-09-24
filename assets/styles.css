@@ -1230,15 +1230,19 @@ code {
   overflow-wrap: anywhere;
 }
 
-#results th:nth-child(1) { width: 6%; }
-#results th:nth-child(2) { width: 22%; }
-#results th:nth-child(3) { width: 10%; }
-#results th:nth-child(4) { width: 8%; }
-#results th:nth-child(5) { width: 12%; }
-#results th:nth-child(6) { width: 11%; }
-#results th:nth-child(7),
-#results th:nth-child(8) { width: 9%; }
-#results th:nth-child(9) { width: 13%; }
+/* Column widths keyed by column identity (not nth-child position) so adding or
+   removing catalog columns never shifts the rest of the table's layout. */
+#results th[data-model-column="selected"] { width: 6%; }
+#results th[data-model-column="modelId"] { width: 19%; }
+#results th[data-model-column="releaseDate"] { width: 9%; }
+#results th[data-model-column="aaIndex"] { width: 6%; }
+#results th[data-model-column="contextWindow"] { width: 10%; }
+#results th[data-model-column="parameterCount"] { width: 9%; }
+#results th[data-model-column="inputPrice"],
+#results th[data-model-column="cachedInputPrice"],
+#results th[data-model-column="cacheWritePrice"],
+#results th[data-model-column="outputPrice"] { width: 8%; }
+#results th[data-model-column="blendedPrice"] { width: 9%; }
 
 #results .sort-button {
   position: relative;

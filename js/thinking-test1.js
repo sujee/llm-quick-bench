@@ -30,14 +30,25 @@ const thinkingForm = document.querySelector("#thinking-form");
 const thinkingRunsInput = document.querySelector("#thinking-runs");
 const thinkingRowsInput = document.querySelector("#thinking-rows");
 const thinkingFormatSelect = document.querySelector("#thinking-format");
+const thinkingTemperatureInput = document.querySelector("#thinking-temperature");
 const thinkingConcurrencyInput = document.querySelector("#thinking-concurrency");
 const thinkingTimeoutInput = document.querySelector("#thinking-timeout");
 const thinkingDisableThinkingInput = document.querySelector("#thinking-disable-thinking");
 const thinkingRequireServerTokensInput = document.querySelector("#thinking-require-server-tokens");
 const thinkingLogConsoleInput = document.querySelector("#thinking-log-console");
 
+// Temperature is an optional request field. The active provider's default fills
+// the input (blank for OpenAI); a blank input is omitted from the request
+// instead of being sent as 0 or an empty value.
+function currentThinkingTemperature() {
+  return parseOptionalClampedNumber(thinkingTemperatureInput.value, 0, 2);
+}
+
 function applyThinkingProviderDefaults(provider) {
   const defaults = resolveTestRequestDefaults("thinking", provider);
+  if ("temperature" in defaults) {
+    thinkingTemperatureInput.value = defaults.temperature == null ? "" : String(defaults.temperature);
+  }
   if ("disableThinking" in defaults) {
     thinkingDisableThinkingInput.checked = Boolean(defaults.disableThinking);
   }
@@ -95,6 +106,7 @@ exportThinkingJsonButton.addEventListener("click", exportThinkingJson);
 [
   thinkingRowsInput,
   thinkingFormatSelect,
+  thinkingTemperatureInput,
   thinkingDisableThinkingInput,
 ].forEach((control) => {
   control.addEventListener("input", renderThinkingRequestTemplate);
@@ -112,7 +124,7 @@ thinkingForm.addEventListener("submit", async (event) => {
     setThinkingStatus("Speed Test 1 is already running.", true);
     return;
   }
-  const selectedModels = models.filter((model) => model.selected);
+  const selectedModels = MODELS.filter((model) => model.selected);
   if (selectedModels.length === 0) {
     setThinkingStatus("Select at least one model to run.", true);
     return;
@@ -122,6 +134,7 @@ thinkingForm.addEventListener("submit", async (event) => {
     runs: clampInteger(thinkingRunsInput.value, 1, 50),
     rowCount: clampInteger(thinkingRowsInput.value, 5, MAX_THINKING_ROWS),
     dataFormat: thinkingFormatSelect.value,
+    temperature: currentThinkingTemperature(),
     concurrency: clampInteger(thinkingConcurrencyInput.value, 1, 12),
     timeoutMs: clampInteger(thinkingTimeoutInput.value, 10, 600) * 1000,
     logToConsole: thinkingLogConsoleInput.checked,
@@ -143,7 +156,7 @@ thinkingForm.addEventListener("submit", async (event) => {
     config,
     runSeed,
     methodology: {
-      temperature: 0,
+      temperature: config.temperature,
       topP: 1,
       operation: "highest score",
       prompt: "regenerated per question from seeded random rows of {id, name, score}",
@@ -200,7 +213,7 @@ thinkingForm.addEventListener("submit", async (event) => {
 });
 
 function updateThinkingRunButtonState() {
-  thinkingRunButton.disabled = !models?.some((model) => model.selected)
+  thinkingRunButton.disabled = !MODELS?.some((model) => model.selected)
     || modelsLoading
     || (typeof speedAbortController !== "undefined" && speedAbortController != null)
     || thinkingAbortController != null
@@ -211,7 +224,7 @@ function updateThinkingRunButtonState() {
 function setThinkingRunning(isRunning) {
   thinkingRunButton.disabled = isRunning
     || (typeof speedAbortController !== "undefined" && speedAbortController != null)
-    || !models?.some((model) => model.selected)
+    || !MODELS?.some((model) => model.selected)
     || modelsLoading;
   thinkingRunButton.firstElementChild.textContent = isRunning ? "Running…" : "Run selected";
   thinkingRunButton.setAttribute("aria-busy", String(isRunning));
@@ -220,19 +233,19 @@ function setThinkingRunning(isRunning) {
   // Lock shared connection + model selection so existing models/selecting operations stay frozen mid-run.
   loadButton.disabled = isRunning;
   connectionControls.forEach((control) => { control.disabled = isRunning; });
-  modelSelectionButtons.forEach((button) => { button.disabled = isRunning; });
+  updateModelSelectionButtons(isRunning);
   document.querySelectorAll("#models-body .model-select").forEach((checkbox) => { checkbox.disabled = isRunning; });
   // Cross-lock Speed Test 1 so the two benchmarks can't run at once.
   if (typeof speedRunButton !== "undefined") {
     speedRunButton.disabled = isRunning
       || speedAbortController != null
-      || !models.some((model) => model.selected)
+      || !MODELS.some((model) => model.selected)
       || modelsLoading;
   }
   if (typeof decodeRunButton !== "undefined") {
     decodeRunButton.disabled = isRunning
       || decodeAbortController != null
-      || !models.some((model) => model.selected)
+      || !MODELS.some((model) => model.selected)
       || modelsLoading;
   }
   // Lock or release the long-context tests' run buttons (needle + prefill).
@@ -386,12 +399,12 @@ function buildThinkingRequestBody(modelId, config, prompt, includeUsage = true) 
     model: modelId,
     messages: [{ role: "user", content: taggedPrompt }],
     stream: true,
-    temperature: 0,
     top_p: 1,
+    temperature: config.temperature,
   };
   if (includeUsage) body.stream_options = { include_usage: true };
   if (config.disableThinking) body.chat_template_kwargs = { enable_thinking: false };
-  return body;
+  return stripBlankFields(body);
 }
 
 function generateThinkingTask(runSeed, runIndex, config) {
@@ -712,6 +725,7 @@ function stopThinkingClock() {
 function renderThinkingRequestTemplate() {
   const previewConfig = {
     disableThinking: thinkingDisableThinkingInput.checked,
+    temperature: currentThinkingTemperature(),
     rowCount: clampInteger(thinkingRowsInput.value, 5, MAX_THINKING_ROWS),
     dataFormat: thinkingFormatSelect.value,
   };
