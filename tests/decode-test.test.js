@@ -27,9 +27,12 @@ test("Decode Test tab, panel, and script are wired into the page", () => {
   }
 });
 
-test("Decode Test runs editable comma-separated output lengths with 100/500/1000 defaults", () => {
+test("Decode Test runs editable comma-separated output lengths with 100/1000/4000 defaults", () => {
   const panel = html.slice(html.indexOf('id="decode-test-panel"'));
-  assert.match(panel, /id="decode-lengths"[^>]*value="100,500,1000"/);
+  assert.match(panel, /id="decode-lengths"[^>]*value="100,1000,4000"/);
+  // The longest default length needs a generous default timeout so 4000-token
+  // runs do not abort on slower endpoints.
+  assert.match(panel, /id="decode-timeout"[^>]*value="300"/);
   assert.match(panel, /Generate a continuous stream of lowercase English words separated by single spaces\./);
   assert.match(panel, /id="decode-disable-thinking"[^>]*checked/);
   assert.match(panel, /id="decode-fixed-output"[^>]*checked/);
@@ -39,7 +42,7 @@ test("Decode Test runs editable comma-separated output lengths with 100/500/1000
   assert.match(decodeSource, /temperature: currentDecodeTemperature\(\)/);
   assert.match(decodeSource, /temperature: config\.temperature,/);
 
-  assert.match(decodeSource, /const DECODE_DEFAULT_OUTPUT_TOKENS = \[100, 500, 1000\];/);
+  assert.match(decodeSource, /const DECODE_DEFAULT_OUTPUT_TOKENS = \[100, 1000, 4000\];/);
   assert.match(decodeSource, /function getDecodeOutputTokenOptions\(\)/);
   assert.match(decodeSource, /parseDecodeOutputTokenOptions\(decodeLengthsInput\?\.value\)/);
   assert.match(decodeSource, /runs: runsPerConfig \* outputTokenLengths\.length/);

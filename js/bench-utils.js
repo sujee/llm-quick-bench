@@ -207,7 +207,7 @@ function summarizeDecodeRuns(runs) {
 // ascending, deduplicated list of integers. Blank and non-numeric entries are
 // skipped; each remaining value is clamped to [minLength, maxLength] like
 // clampInteger. Returns an empty array when nothing valid remains so callers
-// can apply their own fallback (the benchmark defaults to 100, 500, 1000).
+// can apply their own fallback (the benchmark defaults to 100, 1000, 4000).
 function parseDecodeOutputTokenOptions(raw, { minLength = 1, maxLength = 100000 } = {}) {
   const lengths = [];
   String(raw ?? "").split(",").forEach((part) => {
@@ -727,6 +727,161 @@ function summarizeRunContextAccuracy(results) {
   }, { correct: 0, compliant: 0, total: 0, successful: 0, failed: 0 });
 }
 
+// Cache Test summary: splits one model's measured runs into the single cold
+// request (the cache prime) and the warm repeats, then summarizes latency and
+// the server-reported cached-token split for each phase. Cached-token fields
+// stay null when the endpoint does not report cached_tokens - the honest
+// "unknown" rather than a misleading zero. TTFT reduction and hit percent are
+// the headline figures; both stay null until the inputs that define them
+// exist, so partial runs render "-" instead of wrong numbers.
+function summarizeCacheRuns(runs, failedRuns = 0) {
+  const coldRuns = runs.filter((run) => run.phase === "cold");
+  const warmRuns = runs.filter((run) => run.phase === "warm");
+  const warmValues = (field) => warmRuns
+    .map((run) => run[field])
+    .filter((value) => Number.isFinite(value));
+  const coldTtftMs = coldRuns.length === 1 && Number.isFinite(coldRuns[0].ttftMs)
+    ? coldRuns[0].ttftMs
+    : null;
+  const warmTtftP50 = percentile(warmValues("ttftMs"), 0.5);
+  const warmTtftP90 = percentile(warmValues("ttftMs"), 0.9);
+  const coldCachedTokens = coldRuns.length === 1 && Number.isFinite(coldRuns[0].cachedTokens)
+    ? coldRuns[0].cachedTokens
+    : null;
+  const warmCachedTokensP50 = percentile(warmValues("cachedTokens"), 0.5);
+  const warmPromptTokensP50 = percentile(warmValues("promptTokens"), 0.5);
+  const coldPromptTokens = coldRuns.length === 1 && Number.isFinite(coldRuns[0].promptTokens)
+    ? coldRuns[0].promptTokens
+    : null;
+  // Median server-reported prompt size across ALL of the row's requests (the
+  // cold request included), so the Input tokens column shows the provider's
+  // actual count as soon as the first request completes.
+  const promptTokensP50 = percentile(
+    runs.map((run) => run.promptTokens).filter((value) => Number.isFinite(value)),
+    0.5,
+  );
+  return {
+    coldRuns: coldRuns.length,
+    warmRuns: warmRuns.length,
+    failedRuns,
+    coldTtftMs,
+    warmTtftP50,
+    warmTtftP90,
+    ttftReductionPct: coldTtftMs > 0 && warmTtftP50 > 0
+      ? ((coldTtftMs - warmTtftP50) / coldTtftMs) * 100
+      : null,
+    coldCachedTokens,
+    warmCachedTokensP50,
+    coldPromptTokens,
+    promptTokensP50,
+    warmPromptTokensP50,
+    cacheHitPct: warmPromptTokensP50 > 0 && Number.isFinite(warmCachedTokensP50)
+      ? Math.min(warmCachedTokensP50 / warmPromptTokensP50, 1) * 100
+      : null,
+    warmAccuracy: warmRuns.length > 0
+      ? warmRuns.filter((run) => run.correct).length / warmRuns.length
+      : null,
+  };
+}
+
+// Per-request cost with prompt-cache pricing: prompt tokens the server did not
+// report as cached bill at the input price, cached tokens bill at the
+// cached-input price. Cached counts clamp to the prompt total (an endpoint
+// cannot cache more than it prefetched). Returns null when the prompt count or
+// input price is unknown; a missing cached price falls back to the full input
+// price so the estimate stays conservative.
+function calculateCacheCost({ promptTokens, cachedTokens, inputPrice, cachedInputPrice }) {
+  if (!Number.isFinite(promptTokens) || !Number.isFinite(inputPrice)) return null;
+  const promptTokenCount = Math.max(0, promptTokens);
+  const cachedTokenCount = Number.isFinite(cachedTokens)
+    ? Math.max(0, Math.min(cachedTokens, promptTokenCount))
+    : 0;
+  const cachedPrice = Number.isFinite(cachedInputPrice) ? cachedInputPrice : inputPrice;
+  const uncachedTokenCount = promptTokenCount - cachedTokenCount;
+  return (uncachedTokenCount * inputPrice + cachedTokenCount * cachedPrice) / 1_000_000;
+}
+
+// Share of the cold request's cost that the warm cost sheds: the cost-side
+// counterpart of the TTFT reduction. Null until both costs exist and the cold
+// cost is positive.
+function calculateCacheSavingsPct(coldCost, warmCost) {
+  if (!Number.isFinite(coldCost) || !Number.isFinite(warmCost) || coldCost <= 0) return null;
+  return (1 - warmCost / coldCost) * 100;
+}
+
+// Cache Test prompt payload. The padded variant surrounds a fixed trivia
+// question with seeded neutral filler; the short variant is the bare
+// question. The filler is sized so the ENTIRE prompt - wrapper lines, filler,
+// and question - matches the target token count, so a configured 50K run
+// sends a ~50K-token prompt. The padding is regenerated from a fresh random
+// seed per benchmark run (so re-running never measures a cache warmed by the
+// previous run) but stays byte-identical within a run, giving the cache a
+// stable prompt to reuse. This is padding, not a cache-busting nonce: nothing
+// random is injected into individual requests. A non-positive targetTokens
+// builds the short variant.
+function generateCachePromptPayload({ runSeed, payloadIndex, targetTokens }) {
+  const taskSeed = ((runSeed >>> 0) + payloadIndex * 2654435761) >>> 0;
+  const question = "What is the capital of France? Answer with the city name only.";
+  if (!(targetTokens > 0)) {
+    return {
+      seed: taskSeed,
+      payloadIndex,
+      padded: false,
+      targetTokens: 0,
+      lineCount: 0,
+      estimatedTokens: estimateTokenCount(question),
+      prompt: question,
+    };
+  }
+  const random = createSeededRandom(taskSeed);
+  const headLines = [
+    "The reference log below is background context for the question that follows.",
+    "",
+    "--- CONTEXT START ---",
+  ];
+  const tailLines = [
+    "--- CONTEXT END ---",
+    "",
+    question,
+  ];
+  // Fixed overhead of the wrapper lines: the filler must grow until the whole
+  // assembled prompt reaches the target, not just the filler block.
+  const fixedCharacters = [...headLines, ...tailLines].reduce(
+    (sum, line) => sum + line.length + 1,
+    0,
+  );
+  const lines = [];
+  let totalCharacters = 0;
+  const targetCharacters = targetTokens * 4;
+  let entryNumber = 1;
+  while (lines.length < 8 || totalCharacters + fixedCharacters < targetCharacters + 64) {
+    const line = generateContextFillerLine(random, entryNumber);
+    lines.push(line);
+    totalCharacters += line.length + 1;
+    entryNumber += 1;
+  }
+  const prompt = [...headLines, ...lines, ...tailLines].join("\n");
+  return {
+    seed: taskSeed,
+    payloadIndex,
+    padded: true,
+    targetTokens,
+    lineCount: lines.length,
+    estimatedTokens: estimateTokenCount(prompt),
+    prompt,
+  };
+}
+
+// Cache Test grading: the answer must mention Paris. Surrounding words,
+// punctuation, and whitespace are tolerated, so a plain factual reply such as
+// "The capital of France is Paris." grades as correct without a brittle
+// exact-match on one canonical spelling.
+function gradeCacheAnswer(contentText) {
+  return /\bparis\b/i.test(String(contentText ?? "").trim());
+}
+
+
+
 // Placeholder measurement for combinations skipped without a request:
 // either the input size exceeds the model's advertised context window
 // (Prefill Test) or the model has no window metadata to size against
@@ -975,6 +1130,29 @@ function summarizeRunUsage(results) {
   });
 }
 
+// Default pre-run preview shared by every benchmark: one stub result per
+// selected model, so the results table shows who will run (as "Queued")
+// before the test starts. Deselecting a model drops its row on the next
+// render. Used wherever a benchmark renders results before a run exists.
+function previewBenchmarkResults() {
+  const models = typeof MODELS !== "undefined" ? MODELS : [];
+  return models
+    .filter((model) => model.selected)
+    .map((model) => ({
+      modelId: model.modelId,
+      status: "queued",
+      runs: [],
+      errors: [],
+      warmup: null,
+      totalTestTimeMs: null,
+      pricing: {
+        inputPerMillionTokens: model.inputPrice,
+        outputPerMillionTokens: model.outputPrice,
+        cachedInputPerMillionTokens: model.cachedInputPrice,
+      },
+    }));
+}
+
 function createBenchmarkRun({ selectedModels, connection, config, methodology, runSeed }) {
   return {
     status: "running",
@@ -995,6 +1173,9 @@ function createBenchmarkRun({ selectedModels, connection, config, methodology, r
       pricing: {
         inputPerMillionTokens: model.inputPrice,
         outputPerMillionTokens: model.outputPrice,
+        // Cached-input price is only consumed by the Cache Test; other
+        // benchmarks ignore it.
+        cachedInputPerMillionTokens: model.cachedInputPrice,
       },
       status: "queued",
       warmup: null,
@@ -1003,6 +1184,20 @@ function createBenchmarkRun({ selectedModels, connection, config, methodology, r
       totalTestTimeMs: null,
     })),
   };
+}
+
+// Site-wide short display name for a model id: prefer the catalog name from
+// the shared model catalog (e.g. "Nemotron 3.5 Lightning"), falling back to
+// the model id without its vendor prefix, with underscores/hyphens softened
+// to spaces. Tooltips and exports keep the full model id. Shared by the
+// Cache Test (table, chart, confirm dialog), the Decode Test chart, and the
+// long-context confirm dialogs.
+function shortModelLabel(modelId) {
+  const match = typeof MODELS !== "undefined"
+    ? MODELS.find((model) => model.modelId === modelId)
+    : null;
+  const source = match?.name || String(modelId).split("/").at(-1);
+  return String(source).replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
 }
 
 function estimateTokenCount(text) {
@@ -1050,6 +1245,12 @@ function formatDuration(value) {
 
 function formatInteger(value) {
   return Math.round(value).toLocaleString();
+}
+
+// Integer formatting for optional values: "-" (not a fake 0) when missing.
+function formatOptionalInteger(value) {
+  if (value === null || value === undefined || !Number.isFinite(value)) return "-";
+  return formatInteger(value);
 }
 
 function formatTokenUsageBreakdown(usage) {
@@ -1176,28 +1377,41 @@ function showBenchmarkConfirm({
     }
 
     if (rows.length > 0) {
-      const list = document.createElement("ul");
-      list.className = "confirm-rows";
+      // Rows render as a proper table: model | notes | cost (estimated).
+      const table = document.createElement("table");
+      table.className = "confirm-table";
+      const thead = document.createElement("thead");
+      const headRow = document.createElement("tr");
+      ["Model", "Notes", "Cost (estimated)"].forEach((heading) => {
+        const th = document.createElement("th");
+        th.scope = "col";
+        th.textContent = heading;
+        headRow.append(th);
+      });
+      thead.append(headRow);
+      table.append(thead);
+      const tbody = document.createElement("tbody");
       rows.forEach((row) => {
-        const item = document.createElement("li");
-        item.className = row?.muted ? "confirm-row confirm-row-muted" : "confirm-row";
-        const label = document.createElement("span");
+        const item = document.createElement("tr");
+        if (row?.muted) item.className = "confirm-row-muted";
+        const label = document.createElement("td");
         label.className = "confirm-row-label";
         label.textContent = row?.label ?? "";
+        // Optional tooltip for rows whose label is a shortened form.
+        if (row?.title != null) label.title = row.title;
         item.append(label);
-        const detail = document.createElement("span");
+        const detail = document.createElement("td");
         detail.className = "confirm-row-detail";
         detail.textContent = row?.detail ?? "";
         item.append(detail);
-        if (row?.meta != null) {
-          const meta = document.createElement("span");
-          meta.className = "confirm-row-meta";
-          meta.textContent = row.meta;
-          item.append(meta);
-        }
-        list.append(item);
+        const cost = document.createElement("td");
+        cost.className = "confirm-row-meta";
+        cost.textContent = row?.meta ?? "";
+        item.append(cost);
+        tbody.append(item);
       });
-      dialog.append(list);
+      table.append(tbody);
+      dialog.append(table);
     }
 
     if (totals != null) {
@@ -1411,10 +1625,15 @@ function buildColumnPicker({
   onChange,
 }) {
   container.replaceChildren();
-  const columnEntries = columns ?? headers.map((header) => ({
-    key: header.dataset[columnAttr],
-    label: header.querySelector("button span").textContent,
-  }));
+  const columnEntries = columns ?? headers.map((header) => {
+    // Sortable tables wrap the label in a button; plain (non-sortable) headers
+    // carry the label as their own text content.
+    const buttonLabel = header.querySelector("button span");
+    return {
+      key: header.dataset[columnAttr],
+      label: buttonLabel ? buttonLabel.textContent : header.textContent,
+    };
+  });
   columnEntries.forEach(({ key, label: columnLabel }) => {
     const label = document.createElement("label");
     label.className = "column-option";
@@ -1451,10 +1670,18 @@ function updateSortHeaders({ headers, columnAttr, visibleColumns = null, sortSta
   headers.forEach((header) => {
     const key = header.dataset[columnAttr];
     header.hidden = visibleColumns ? !visibleColumns.has(key) : false;
+    const icon = header.querySelector(".sort-icon");
+    // Headers without a sort icon belong to non-sortable tables (the Cache
+    // Test): sync column visibility only and leave the sort state untouched.
+    if (!icon) {
+      header.classList.remove("sorted-column");
+      header.setAttribute("aria-sort", "none");
+      return;
+    }
     const isActive = key === sortState.key;
     header.classList.toggle("sorted-column", isActive);
     header.setAttribute("aria-sort", isActive ? sortState.direction : "none");
-    header.querySelector(".sort-icon").textContent = isActive
+    icon.textContent = isActive
       ? sortState.direction === "ascending" ? "↑" : "↓"
       : "↕";
   });
@@ -1489,7 +1716,10 @@ function sortRowsByState(rows, getSortValue, sortState) {
 // direction toggling, active-column styling, and missing-value sort behavior.
 // Existing headers can be bound with bindHeaders(); dynamic tables can build
 // their headers from a column definition array with renderHeaders().
-function createTableSorter({ initialKey, initialDirection = "ascending", onSort }) {
+// Sort state controller for a benchmark table. `initialKey: null` means "no
+// default sort": rows keep their natural order until a header is clicked,
+// no column is marked active, and the state survives column-picker changes.
+function createTableSorter({ initialKey = null, initialDirection = "ascending", onSort }) {
   let sortState = { key: initialKey, direction: initialDirection };
   let headerConfig = null;
   const boundHeaders = new WeakSet();
@@ -1569,6 +1799,8 @@ function createTableSorter({ initialKey, initialDirection = "ascending", onSort 
     },
     sortBy,
     sortRows(rows, getSortValue) {
+      // No active sort key: natural order, untouched.
+      if (sortState.key == null) return [...rows];
       return sortRowsByState(rows, getSortValue, sortState);
     },
     updateHeaders,
@@ -1599,11 +1831,13 @@ function createBenchmarkTable({
     : headers.map((header) => header.dataset[columnAttr]);
   const visibleColumns = loadVisibleColumnSet(preferenceKey, allKeys, defaultColumns ?? allKeys);
   const sorter = createTableSorter({
-    initialKey: initialSortKey,
+    initialKey: initialSortKey ?? null,
     initialDirection: initialSortDirection,
     onSort,
   });
-  if (!visibleColumns.has(sorter.state.key)) {
+  // A null initialSortKey means "no default sort"; only fall back to the
+  // first visible column when a real key was requested but is hidden.
+  if (sorter.state.key != null && !visibleColumns.has(sorter.state.key)) {
     sorter.reset({ key: [...visibleColumns][0], direction: "ascending" });
   }
 
@@ -1615,7 +1849,9 @@ function createBenchmarkTable({
       container: pickerContainer,
       visibleColumns,
       onChange: (nextColumns) => {
-        if (!nextColumns.has(sorter.state.key)) {
+        // Keep the unsorted default when no column is active; only re-target
+        // the sort when the active column was actually hidden.
+        if (sorter.state.key != null && !nextColumns.has(sorter.state.key)) {
           sorter.reset({ key: [...nextColumns][0], direction: "ascending" });
         }
         saveVisibleColumnSet(preferenceKey, visibleColumns);
@@ -1905,6 +2141,7 @@ async function runStreamingChatCompletion({
     const rawResponseChunks = [];
     let promptTokens = null;
     let completionTokens = null;
+    let cachedTokens = null;
     let serverReasoningTokens = null;
     let finishReason = null;
 
@@ -1914,6 +2151,7 @@ async function runStreamingChatCompletion({
       const chunkData = extractSseChunkData(chunk);
       if (chunkData.completionTokens !== null) completionTokens = chunkData.completionTokens;
       if (chunkData.promptTokens !== null) promptTokens = chunkData.promptTokens;
+      if (chunkData.cachedTokens !== null) cachedTokens = chunkData.cachedTokens;
       if (chunkData.reasoningTokens !== null) serverReasoningTokens = chunkData.reasoningTokens;
       if (chunkData.finishReason) finishReason = chunkData.finishReason;
       if (chunkData.contentDelta || chunkData.reasoningDelta) {
@@ -1992,6 +2230,10 @@ async function runStreamingChatCompletion({
         endToEndLatencyMs: finishedAt - startedAt,
         tokensPerSecond: completionTokens / generationSeconds,
         promptTokens,
+        // Server-reported cached prompt tokens (prompt_tokens_details.cached_tokens
+        // or the top-level cached_tokens shorthand). Null when the endpoint does
+        // not report the cache split; the Cache Test shows "-" in that case.
+        cachedTokens,
         completionTokens,
         serverReasoningTokens,
         totalTokens: promptTokens + completionTokens,
@@ -2118,6 +2360,18 @@ function extractSseChunkData(chunk) {
   const promptTokens = Number.isFinite(chunk?.usage?.prompt_tokens)
     ? chunk.usage.prompt_tokens
     : null;
+  // Cached prompt tokens, in the order providers report them: the
+  // OpenAI-compatible standard field, the top-level shorthand some endpoints
+  // use, and Nebius's prompt_cache_hit_tokens (its newer backends null out
+  // prompt_tokens_details and report the split top-level). Null when the
+  // endpoint reports no cache split at all.
+  const cachedTokens = Number.isFinite(chunk?.usage?.prompt_tokens_details?.cached_tokens)
+    ? chunk.usage.prompt_tokens_details.cached_tokens
+    : Number.isFinite(chunk?.usage?.cached_tokens)
+      ? chunk.usage.cached_tokens
+      : Number.isFinite(chunk?.usage?.prompt_cache_hit_tokens)
+        ? chunk.usage.prompt_cache_hit_tokens
+        : null;
   // Providers that break out reasoning tokens report them in one of these fields.
   const reasoningTokens = Number.isFinite(chunk?.usage?.completion_tokens_details?.reasoning_tokens)
     ? chunk.usage.completion_tokens_details.reasoning_tokens
@@ -2130,5 +2384,5 @@ function extractSseChunkData(chunk) {
   const reasoningDelta = typeof delta?.reasoning_content === "string"
     ? delta.reasoning_content
     : typeof delta?.reasoning === "string" ? delta.reasoning : "";
-  return { completionTokens, promptTokens, reasoningTokens, finishReason, contentDelta, reasoningDelta };
+  return { completionTokens, promptTokens, cachedTokens, reasoningTokens, finishReason, contentDelta, reasoningDelta };
 }

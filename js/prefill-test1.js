@@ -53,6 +53,10 @@ function getPrefillConfig() {
 createContextBenchmark({
   key: "prefill",
   logName: "Prefill Test",
+  // One click can send mega-token prompts (up to 1M tokens per request at
+  // the default sizes), so confirm the planned volume and estimated input
+  // cost before anything is sent - same styled dialog as the Needle Test.
+  confirmRun: true,
   dom: {
     form: prefillForm,
     configInputs: prefillConfigInputs,

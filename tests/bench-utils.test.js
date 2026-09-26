@@ -82,11 +82,13 @@ function loadBenchUtils() {
     deriveBenchmarkRunStatus,
     extractSseChunkData,
     formatBenchmarkErrorTooltip,
+    formatOptionalInteger,
     formatTokenUsageBreakdown,
     getVisibleColumnDefinitions,
     parseDecodeOutputTokenOptions,
     parseOptionalClampedNumber,
     parseSseLine,
+    previewBenchmarkResults,
     runBenchmarkSequence,
     runStreamingChatCompletion,
     runWithConcurrency,
@@ -131,8 +133,81 @@ test("shared table sorter applies defaults, toggles, and missing-value ordering"
   assert.equal(changes.length, 2);
 });
 
-test("createBenchmarkTable unifies sort, visibility, and picker for static headers", () => {
+test("createBenchmarkTable supports no default sort (natural order)", () => {
   const { context, utils } = loadBenchUtils();
+  const headers = ["alpha", "beta"].map((key) => {
+    const header = context.document.createElement("th");
+    header.dataset.sortColumn = key;
+    const button = context.document.createElement("button");
+    button.className = "sort-button";
+    const label = context.document.createElement("span");
+    label.textContent = key;
+    const icon = context.document.createElement("span");
+    icon.className = "sort-icon";
+    button.append(label, icon);
+    header.append(button);
+    return header;
+  });
+  const container = context.document.createElement("div");
+  // No initialSortKey: the table starts unsorted.
+  const table = utils.createBenchmarkTable({
+    headers,
+    columnAttr: "sortColumn",
+    preferenceKey: "test-unsorted-columns",
+    defaultColumns: ["alpha", "beta"],
+    initialSortKey: null,
+    pickerContainer: container,
+    onSort: () => {},
+  });
+  assert.equal(table.state.key, null, "no column is active by default");
+
+  const rows = [
+    { alpha: 2, beta: "zulu" },
+    { alpha: 1, beta: "yankee" },
+    { alpha: 3, beta: "xray" },
+  ];
+  const natural = table.sortRows(rows, (row, key) => row[key]);
+  // Array.from normalizes the vm-realm array prototype (same pattern as the
+  // other table tests).
+  assert.deepEqual(
+    Array.from(natural, (row) => row.alpha),
+    [2, 1, 3],
+    "unsorted default keeps the rows in their natural order",
+  );
+  assert.equal(natural[0], rows[0], "the same row objects come back");
+});
+
+test("previewBenchmarkResults lists selected models as queued rows", () => {
+  const { context, utils } = loadBenchUtils();
+  // No MODELS in this harness: the guard yields an empty preview.
+  assert.equal(utils.previewBenchmarkResults().length, 0);
+
+  vm.runInContext(
+    "MODELS = [{ modelId: 'openai/a', selected: true, inputPrice: 1, outputPrice: 2, cachedInputPrice: 0.1 }, { modelId: 'openai/b', selected: false }];",
+    context,
+  );
+  const preview = utils.previewBenchmarkResults();
+  assert.equal(preview.length, 1, "only selected models preview");
+  assert.equal(preview[0].modelId, "openai/a");
+  assert.equal(preview[0].status, "queued");
+  assert.deepEqual(JSON.parse(JSON.stringify(preview[0].pricing)), {
+    inputPerMillionTokens: 1,
+    outputPerMillionTokens: 2,
+    cachedInputPerMillionTokens: 0.1,
+  });
+  assert.deepEqual(JSON.parse(JSON.stringify(preview[0].runs)), []);
+});
+
+test("formatOptionalInteger renders missing values as a dash, not zero", () => {
+  const { utils } = loadBenchUtils();
+  assert.equal(utils.formatOptionalInteger(null), "-");
+  assert.equal(utils.formatOptionalInteger(undefined), "-");
+  assert.equal(utils.formatOptionalInteger(Number.NaN), "-");
+  assert.equal(utils.formatOptionalInteger(5), "5");
+  assert.equal(utils.formatOptionalInteger(1234), "1,234");
+});
+
+test("createBenchmarkTable unifies sort, visibility, and picker for static headers", () => {  const { context, utils } = loadBenchUtils();
   const headers = ["alpha", "beta", "gamma"].map((key) => {
     const header = context.document.createElement("th");
     header.dataset.col = key;
@@ -1132,6 +1207,7 @@ test("SSE parsing accepts data chunks and ignores protocol noise", () => {
   assert.deepEqual(JSON.parse(JSON.stringify(utils.extractSseChunkData(chunk))), {
     completionTokens: 2,
     promptTokens: 3,
+    cachedTokens: null,
     reasoningTokens: null,
     finishReason: "stop",
     contentDelta: "hi",
@@ -1142,6 +1218,11 @@ test("SSE parsing accepts data chunks and ignores protocol noise", () => {
     'data: {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":100,"completion_tokens_details":{"reasoning_tokens":80}}}',
   );
   assert.equal(utils.extractSseChunkData(detailed).reasoningTokens, 80);
+
+  const cached = utils.parseSseLine(
+    'data: {"choices":[],"usage":{"prompt_tokens":10,"prompt_tokens_details":{"cached_tokens":7}}}',
+  );
+  assert.equal(utils.extractSseChunkData(cached).cachedTokens, 7);
 
   const flatReasoning = utils.parseSseLine(
     'data: {"choices":[],"usage":{"prompt_tokens":10,"completion_tokens":100,"reasoning_tokens":60}}',

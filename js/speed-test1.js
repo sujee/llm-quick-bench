@@ -224,6 +224,7 @@ form.addEventListener("submit", async (event) => {
     if (typeof resetSpeedResults === "function") resetSpeedResults();
     if (typeof resetDecodeResults === "function") resetDecodeResults();
     if (typeof resetContextResults === "function") resetContextResults();
+    if (typeof resetCacheResults === "function") resetCacheResults();
     updateSelectionCount();
     updateModelResultsState();
     const referenceMatches = MODELS.filter((model) => model.referenceMatched).length;
@@ -249,6 +250,7 @@ form.addEventListener("submit", async (event) => {
     if (typeof resetSpeedResults === "function") resetSpeedResults();
     if (typeof resetDecodeResults === "function") resetDecodeResults();
     if (typeof resetContextResults === "function") resetContextResults();
+    if (typeof resetCacheResults === "function") resetCacheResults();
     renderTable();
     updateSelectionCount();
     results.hidden = false;
@@ -289,11 +291,21 @@ function isContextBenchmarkRunningSafely() {
   }
 }
 
+function isCacheBenchmarkRunningSafely() {
+  if (typeof isCacheBenchmarkRunning !== "function") return false;
+  try {
+    return isCacheBenchmarkRunning();
+  } catch {
+    return false;
+  }
+}
+
 let _warnedAboutMissingThinkingScript = false;
 function isThinkingBenchmarkRunning() {
   try {
     return thinkingAbortController != null
       || isDecodeBenchmarkRunningSafely()
+      || isCacheBenchmarkRunningSafely()
       || isContextBenchmarkRunningSafely();
   } catch (error) {
     if (!_warnedAboutMissingThinkingScript && error instanceof ReferenceError) {
@@ -309,6 +321,7 @@ function isSpeedBenchmarkRunning() {
   try {
     return speedAbortController != null
       || isDecodeBenchmarkRunningSafely()
+      || isCacheBenchmarkRunningSafely()
       || isContextBenchmarkRunningSafely();
   } catch (error) {
     if (!_warnedAboutMissingSpeedScript && error instanceof ReferenceError) {
@@ -716,7 +729,7 @@ exportSpeedCsvButton.addEventListener("click", exportSpeedCsv);
 exportSpeedJsonButton.addEventListener("click", exportSpeedJson);
 document.addEventListener("models:selection-changed", updateSpeedRunButtonState);
 document.addEventListener("models:selection-changed", () => {
-  if (speedAbortController == null) renderSpeedGraphs();
+  if (speedAbortController == null) renderSpeedResults();
 });
 [speedPromptInput, speedMaxTokensInput, speedMinTokensInput, speedTemperatureInput].forEach((input) => {
   input.addEventListener("input", renderSpeedRequestTemplate);
@@ -729,6 +742,10 @@ speedForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (typeof thinkingAbortController !== "undefined" && thinkingAbortController != null) {
     setSpeedStatus("Thinking Test 1 is already running.", true);
+    return;
+  }
+  if (isCacheBenchmarkRunningSafely()) {
+    setSpeedStatus("Cache Test is already running.", true);
     return;
   }
   const selectedModels = MODELS.filter((model) => model.selected);
@@ -835,6 +852,7 @@ function updateSpeedRunButtonState() {
     || speedAbortController != null
     || (typeof thinkingAbortController !== "undefined" && thinkingAbortController != null)
     || isDecodeBenchmarkRunningSafely()
+    || isCacheBenchmarkRunningSafely()
     || isContextBenchmarkRunningSafely();
 }
 
@@ -860,6 +878,13 @@ function setSpeedRunning(isRunning) {
   if (typeof decodeRunButton !== "undefined") {
     decodeRunButton.disabled = isRunning
       || decodeAbortController != null
+      || !MODELS.some((model) => model.selected)
+      || modelsLoading;
+  }
+  // Cross-lock the Cache Test run button.
+  if (typeof cacheRunButton !== "undefined") {
+    cacheRunButton.disabled = isRunning
+      || (typeof cacheAbortController !== "undefined" && cacheAbortController != null)
       || !MODELS.some((model) => model.selected)
       || modelsLoading;
   }
@@ -975,9 +1000,12 @@ function renderSpeedResults() {
 }
 
 function renderSpeedTable(runUsage) {
-  const sortedResults = speedRun
-    ? speedTable.sortRows(speedRun.results, getSpeedSortValue)
-    : [];
+  // Before a run, preview one Queued row per selected model (site-wide
+  // default behaviour) instead of an empty table.
+  const sortedResults = speedTable.sortRows(
+    speedRun ? speedRun.results : previewBenchmarkResults(),
+    getSpeedSortValue,
+  );
   const thead = document.createElement("thead");
   speedTable.renderHeaders(thead);
 
@@ -992,7 +1020,7 @@ function renderSpeedTable(runUsage) {
     const liveTestTimeMs = result.totalTestTimeMs ?? getLiveElapsedMs(result);
     const values = [
       result.modelId,
-      formatBenchmarkResultStatus(result, speedRun.config.runs),
+      formatBenchmarkResultStatus(result, speedRun?.config.runs ?? 0),
       formatMilliseconds(summary.ttftMedian),
       formatMilliseconds(summary.ttftP95),
       formatRate(summary.tpsMin),

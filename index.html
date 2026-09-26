@@ -20,6 +20,7 @@
     <script src="js/context-bench.js" defer></script>
     <script src="js/needle-test1.js" defer></script>
     <script src="js/prefill-test1.js" defer></script>
+    <script src="js/cache-test1.js" defer></script>
   </head>
   <body>
     <main class="shell">
@@ -113,6 +114,17 @@
           tabindex="-1"
         >
           Prefill Test
+        </button>
+        <button
+          id="cache-test-tab"
+          class="tab-button"
+          type="button"
+          role="tab"
+          aria-selected="false"
+          aria-controls="cache-test-panel"
+          tabindex="-1"
+        >
+          Cache Test
         </button>
       </nav>
 
@@ -631,7 +643,7 @@ Output nothing else. Do not include reasoning, explanations, labels, markdown, o
       <section id="decode-benchmark" class="benchmark" aria-label="Decode Test benchmark">
         <section class="methodology-overview" aria-labelledby="decode-methodology-heading">
           <h3 id="decode-methodology-heading">What the Decode Test measures</h3>
-          <p>Client-observed output generation speed from a short fixed prompt. Each model runs the configured number of tests at each configured output length (default: 100, 500, and 1000 tokens); each length is summarized with p50/p90 percentiles.</p>
+          <p>Client-observed output generation speed from a short fixed prompt. Each model runs the configured number of tests at each configured output length (default: 100, 1000, and 4000 tokens); each length is summarized with p50/p90 percentiles.</p>
           <div class="methodology-metrics">
             <div>
               <strong>Decode Speed (p50)</strong>
@@ -651,8 +663,8 @@ Output nothing else. Do not include reasoning, explanations, labels, markdown, o
         <form id="decode-form" class="benchmark-form">
           <div class="field">
             <label for="decode-lengths">Output lengths</label>
-            <input id="decode-lengths" type="text" value="100,500,1000" />
-            <p class="hint">Comma-separated output lengths, sent as <code>max_tokens</code>. Every length is tested for each model; invalid or empty input falls back to 100, 500, 1000.</p>
+            <input id="decode-lengths" type="text" value="100,1000,4000" />
+            <p class="hint">Comma-separated output lengths, sent as <code>max_tokens</code>. Every length is tested for each model; invalid or empty input falls back to 100, 1000, 4000.</p>
           </div>
           <div class="field">
             <label for="decode-runs">Runs per output length</label>
@@ -671,8 +683,8 @@ Output nothing else. Do not include reasoning, explanations, labels, markdown, o
           </div>
           <div class="field">
             <label for="decode-timeout">Timeout / request (sec)</label>
-            <input id="decode-timeout" type="number" min="10" max="600" value="120" required />
-            <p class="hint">Stops stalled streams cleanly.</p>
+            <input id="decode-timeout" type="number" min="10" max="600" value="300" required />
+            <p class="hint">Stops stalled streams cleanly. The longest default length (4000 tokens) needs a generous timeout on slower endpoints.</p>
           </div>
           <div class="field prompt-field">
             <label for="decode-prompt">Prompt</label>
@@ -779,7 +791,7 @@ Output nothing else. Do not include reasoning, explanations, labels, markdown, o
           <div class="methodology">
             <ul>
               <li><strong>Prompt</strong> is short and fixed so the test isolates output generation rather than prompt processing.</li>
-              <li><strong>Every configured output length per model</strong> — comma-separated in the form and defaulting to 100, 500, and 1000 tokens — each repeated for the configured number of runs and reported as its own table row. The request sends <code>max_tokens</code> equal to the length and, when enabled, <code>min_tokens</code> plus <code>ignore_eos: true</code> so the model cannot stop early.</li>
+              <li><strong>Every configured output length per model</strong> — comma-separated in the form and defaulting to 100, 1000, and 4000 tokens — each repeated for the configured number of runs and reported as its own table row. The request sends <code>max_tokens</code> equal to the length and, when enabled, <code>min_tokens</code> plus <code>ignore_eos: true</code> so the model cannot stop early.</li>
               <li><strong>Each row aggregates its runs</strong> with nearest-rank percentiles: decode speed p50; TTFT p50 and p90; total latency p50 and p90; plus p50 decode time, visible tokens, and reasoning tokens.</li>
               <li><strong>Decode Speed</strong> = (visible output tokens − 1) ÷ seconds between the first and last visible output token. The first token is subtracted because it is not part of the decode interval.</li>
               <li><strong>TTFT</strong> runs from request dispatch to the first visible (final content) token. Reasoning deltas are ignored for TTFT.</li>
@@ -1145,6 +1157,7 @@ Output nothing else. Do not include reasoning, explanations, labels, markdown, o
           <div class="methodology">
             <ul>
               <li><strong>Prompt</strong> is generated per question from a deterministic seed: a fresh filler document of neutral log entries with exactly one access-code entry (the needle), so the model never sees the same document twice within a run.</li>
+              <li><strong>A styled confirmation dialog precedes every run</strong>: mega-token prompts mean one click can send millions of tokens. The dialog lists the planned requests and input tokens per model (warm-up included) with the estimated input cost from each model's pricing metadata, plus a highlighted totals block - and nothing is sent until you press <em>Run test</em>. Escape, Cancel, or clicking the backdrop backs out without a request. Output and reasoning tokens are not included in the estimate.</li>
               <li><strong>Input sizes are the comma-separated token counts</strong> (default 10K, 50K, 100K, 250K, 500K, 1M), tested smallest first. Sizes are directly comparable across models. Combinations whose size exceeds a model's advertised context window are skipped without sending a request and show as Skipped / —; models without window metadata are always sent.</li>
               <li><strong>The needle position is fixed</strong> (default 90%) so the only variable is the input size. Placement is <code>round((lines − 1) × percent / 100)</code>, near the end of the document. The results table shows one row per model × input size, with the Needle position column reporting the percent and the needle's approximate token depth (~N tokens in). Task instructions stay fixed at the top and bottom of the prompt, so only the size moves.</li>
               <li><strong>Status tracks each row live</strong>: Warming up, Running x/y while the size's runs stream (the run in flight counts, so a row reads Running 1/3 as soon as its first run starts), Waiting while other sizes run, then Completed x/y. Skipped x/y marks sizes that exceed a model's advertised context window, Partial x/y / Failed x/y appear when requests fail, and Cancelled if you stop the run. The count is measured runs after the excluded warm-up. While a request's prompt is still uploading, that row's Status cell also shows a thin <strong>input progress bar</strong> (Input x%) - the request body is streamed in known-size chunks, so the bar tracks how much of the input has been sent; it disappears once the endpoint has accepted the request.</li>
@@ -1183,6 +1196,202 @@ Output nothing else. Do not include reasoning, explanations, labels, markdown, o
                 <summary>Sample consolidated response</summary>
                 <p id="prefill-sample-output-note" class="sample-request-note">All generated deltas from the same measured run, split into reasoning and final content, plus the grading verdict.</p>
                 <pre class="sample-request"><code id="prefill-sample-output-code"></code></pre>
+              </details>
+            </div>
+          </div>
+        </details>
+
+      </section>
+      </div>
+
+      <div
+        id="cache-test-panel"
+        class="tab-panel"
+        role="tabpanel"
+        aria-labelledby="cache-test-tab"
+        hidden
+      >
+      <section id="cache-benchmark" class="benchmark" aria-label="Cache Test benchmark">
+        <section class="methodology-overview" aria-labelledby="cache-methodology-heading">
+          <h3 id="cache-methodology-heading">What the Cache Test measures</h3>
+          <p>Prompt-cache effectiveness with a simple trivia question asked three ways: a short prompt (the bare question, below the cacheable minimum), a padded prompt (the same question with filler that reaches the configured size), and a nonce-busted control (the padded prompt with a fresh nonce prepended to every request, so the prefix cache can never match). Each variant sends one cold request then the configured number of repeats. The server-reported cached-token split shows what the endpoint actually reused, next to the TTFT drop and the billed-cost drop - and the busted rows show what no caching at all looks like.</p>
+          <div class="methodology-metrics">
+            <div>
+              <strong>Cache hit %</strong>
+              <span>Server-reported cached tokens ÷ prompt tokens on warm runs - the ground truth for what the endpoint reused.</span>
+            </div>
+            <div>
+              <strong>TTFT reduction</strong>
+              <span>How much of the cold request's time-to-first-token the warm p50 sheds - prefill work the endpoint skipped.</span>
+            </div>
+            <div>
+              <strong>Cost savings</strong>
+              <span>Warm request cost at cached input pricing vs the cold cost at full input pricing, per the model's catalog prices.</span>
+            </div>
+          </div>
+        </section>
+
+        <form id="cache-form" class="benchmark-form">
+          <div class="field">
+            <label for="cache-payload">Padded prompt size (tokens)</label>
+            <input id="cache-payload" type="number" min="1024" max="10000000" value="50000" required />
+            <p class="hint">Total prompt size for the padded variant - filler plus the question. Providers only cache prefixes above a minimum (about 1024 tokens for OpenAI); the short variant stays below it on purpose. The filler is regenerated once per run so a re-run never measures a previously warmed cache.</p>
+          </div>
+          <div class="field">
+            <label for="cache-runs">Runs per model</label>
+            <input id="cache-runs" type="number" min="1" max="50" value="5" required />
+            <p class="hint">Identical repeats sent right after each variant's cold request: per model, 1 cold + N repeats for each of the three variants (short, padded, and nonce-busted).</p>
+          </div>
+          <div class="field">
+            <label for="cache-temperature">Temperature</label>
+            <input id="cache-temperature" type="number" min="0" max="2" step="0.1" value="0" />
+            <p class="hint">Sampling temperature; 0 keeps runs deterministic. Left blank for OpenAI, which does not accept it.</p>
+          </div>
+          <div class="field">
+            <label for="cache-timeout">Timeout / request (sec)</label>
+            <input id="cache-timeout" type="number" min="10" max="600" value="300" required />
+            <p class="hint">Long payloads prefill slowly on the cold request; keep this generous.</p>
+          </div>
+          <div class="field prompt-field">
+            <label for="cache-prompt-preview">Prompt template</label>
+            <textarea id="cache-prompt-preview" rows="7" readonly>Every request asks one fixed question: "What is the capital of France? Answer with the city name only."
+
+The short variant sends just that question. The padded variant surrounds it with a seeded filler log sized to the configured payload, generated once per run, then asks the same question at the end. The nonce-busted variant sends the same padded prompt with a fresh nonce as the very first line of every request, so the prefix cache can never match. Within a run the request bytes are identical for the cold request and every repeat of short and padded, so the endpoint sees a stable prompt to cache and reuse.</textarea>
+            <p class="hint">Preview only - the payload is generated once per run. A live sample appears under Testing methodology.</p>
+          </div>
+          <fieldset class="benchmark-options">
+            <legend>Request options</legend>
+            <div class="benchmark-toggle-control">
+              <label for="cache-require-server-tokens">
+                <input id="cache-require-server-tokens" type="checkbox" checked />
+                <span>Require server token counts</span>
+              </label>
+              <p class="hint">Fails a request when streaming usage is missing instead of estimating tokens. The cached-token split comes from that usage.</p>
+            </div>
+            <div class="benchmark-toggle-control">
+              <label for="cache-log-console">
+                <input id="cache-log-console" type="checkbox" />
+                <span>Log requests and responses to the browser console</span>
+              </label>
+              <p class="hint">Logs the HTTP-style request, exact SSE chunks, assembled output, and grading. The API key is always redacted.</p>
+            </div>
+          </fieldset>
+          <div class="run-actions">
+            <button id="cache-run-button" class="primary-button" type="submit" disabled>
+              <span>Run selected</span><span aria-hidden="true">→</span>
+            </button>
+            <button id="cache-cancel-button" class="secondary-button" type="button" hidden>Cancel</button>
+          </div>
+        </form>
+
+        <div id="cache-status" class="status" role="status" aria-live="polite"></div>
+
+        <div id="cache-results" class="benchmark-results">
+          <section class="decode-chart-section" aria-labelledby="cache-chart-heading">
+            <div class="decode-matrix-head">
+              <h3 id="cache-chart-heading">TTFT: cold vs warm</h3>
+              <p class="metric-note">One chart per model: the cold request's TTFT (muted) against the warm p50 (accent) for each variant, on a log scale. The gap is the prefill the cache skipped - padded should drop hard, busted should not move (by design), and short sits below the cacheable minimum.</p>
+            </div>
+            <div id="cache-chart"></div>
+          </section>
+          <section class="decode-run-section" aria-labelledby="cache-run-heading">
+            <div class="decode-run-head">
+              <h3 id="cache-run-heading">Run results</h3>
+            </div>
+            <div class="result-toolbar">
+              <p class="metric-note">One row per model × variant (short / padded / nonce-busted) · Per variant: 1 cold request + N repeats · Higher cache hit %, TTFT reduction, and cost savings are better · Busted rows are the no-cache control</p>
+              <div class="export-actions">
+                <span class="column-picker-cue">Select columns <span aria-hidden="true">→</span></span>
+                <details class="column-picker">
+                  <summary class="secondary-button" aria-label="Select visible Cache Test columns">Columns</summary>
+                  <div class="column-menu">
+                    <p>Cache test results</p>
+                    <div id="cache-column-options" class="column-options"></div>
+                    <button id="show-all-cache-columns" class="column-reset" type="button">Show all</button>
+                  </div>
+                </details>
+                <button id="export-cache-csv" class="secondary-button" type="button">Export CSV</button>
+                <button id="export-cache-json" class="secondary-button" type="button">Export JSON</button>
+              </div>
+            </div>
+            <div class="table-frame">
+              <table class="cache-table">
+                <thead>
+                  <tr>
+                    <th scope="col" data-cache-column="modelId"><button class="sort-button" type="button"><span>Model</span><span class="sort-icon" aria-hidden="true">↕</span></button></th>
+                    <th scope="col" data-cache-column="status"><button class="sort-button" type="button"><span>Status</span><span class="sort-icon" aria-hidden="true">↕</span></button></th>
+                    <th scope="col" data-cache-column="payloadTokens" title="Short = bare question; Padded = question + filler to the configured size; Busted = padded prompt + a fresh nonce on every request"><button class="sort-button" type="button"><span>Variant</span><span class="sort-icon" aria-hidden="true">↕</span></button></th>
+                    <th scope="col" data-cache-column="promptTokensP50" title="Server-reported prompt tokens for this variant's prompt (median across its requests)"><button class="sort-button" type="button"><span>Input tokens</span><span class="sort-icon" aria-hidden="true">↕</span></button></th>
+                    <th scope="col" data-cache-column="coldTtftMs"><button class="sort-button" type="button"><span>Cold TTFT</span><span class="sort-icon" aria-hidden="true">↕</span></button></th>
+                    <th scope="col" data-cache-column="warmTtftP50" title="Median (P50)"><button class="sort-button" type="button"><span>Warm TTFT p50</span><span class="sort-icon" aria-hidden="true">↕</span></button></th>
+                    <th scope="col" data-cache-column="warmTtftP90"><button class="sort-button" type="button"><span>Warm TTFT p90</span><span class="sort-icon" aria-hidden="true">↕</span></button></th>
+                    <th scope="col" data-cache-column="ttftReductionPct"><button class="sort-button" type="button"><span>TTFT reduction</span><span class="sort-icon" aria-hidden="true">↕</span></button></th>
+                    <th scope="col" data-cache-column="coldCachedTokens"><button class="sort-button" type="button"><span>Cold cached tok</span><span class="sort-icon" aria-hidden="true">↕</span></button></th>
+                    <th scope="col" data-cache-column="warmCachedTokensP50" title="Median (P50)"><button class="sort-button" type="button"><span>Warm cached tok p50</span><span class="sort-icon" aria-hidden="true">↕</span></button></th>
+                    <th scope="col" data-cache-column="cachedTokensTotal" title="Server-reported cached tokens summed across this variant's requests"><button class="sort-button" type="button"><span>Cached tokens (total)</span><span class="sort-icon" aria-hidden="true">↕</span></button></th>
+                    <th scope="col" data-cache-column="cacheHitPct"><button class="sort-button" type="button"><span>Cache hit</span><span class="sort-icon" aria-hidden="true">↕</span></button></th>
+                    <th scope="col" data-cache-column="coldCost"><button class="sort-button" type="button"><span>Cold cost</span><span class="sort-icon" aria-hidden="true">↕</span></button></th>
+                    <th scope="col" data-cache-column="warmCostP50" title="Median (P50)"><button class="sort-button" type="button"><span>Warm cost p50</span><span class="sort-icon" aria-hidden="true">↕</span></button></th>
+                    <th scope="col" data-cache-column="costSavingsPct"><button class="sort-button" type="button"><span>Cost savings</span><span class="sort-icon" aria-hidden="true">↕</span></button></th>
+                    <th scope="col" data-cache-column="warmAccuracy"><button class="sort-button" type="button"><span>Warm accuracy</span><span class="sort-icon" aria-hidden="true">↕</span></button></th>
+                    <th scope="col" data-cache-column="testTimeMs"><button class="sort-button" type="button"><span>Test time</span><span class="sort-icon" aria-hidden="true">↕</span></button></th>
+                  </tr>
+                </thead>
+                <tbody id="cache-body"></tbody>
+              </table>
+            </div>
+            <div class="run-summary" aria-label="Total Cache Test usage and savings">
+              <div><span>Run time</span><strong id="summary-cache-time">-</strong></div>
+              <div><span>Best TTFT reduction</span><strong id="summary-cache-best">-</strong></div>
+              <div><span>Total tokens</span><strong id="summary-cache-total-tokens">-</strong></div>
+              <div><span>Estimated cost</span><strong id="summary-cache-cost">-</strong></div>
+              <div><span>Cache savings</span><strong id="summary-cache-savings">-</strong></div>
+            </div>
+            <p id="cache-usage-note" class="table-hint">Results will appear here after a Cache Test run.</p>
+          </section>
+        </div>
+
+        <details class="methodology-details" open>
+          <summary>Testing methodology</summary>
+          <div class="methodology">
+            <ul>
+              <li><strong>One fixed question, three variants.</strong> Every request asks "What is the capital of France?" The <strong>short</strong> variant is the bare question - a handful of tokens, deliberately below the minimum prefix most providers cache. The <strong>padded</strong> variant pads the same question with a seeded filler log sized to the configured payload (default 50K tokens), well above that minimum. The <strong>busted</strong> control sends the same padded prompt with a fresh nonce as the very first line of every request - and since prefix caches match from the first token, a differing first line guarantees a miss no matter what follows.</li>
+              <li><strong>The request sequence per variant is 1 cold + N repeats.</strong> The cold request is the cache prime and the prefill baseline; the repeats (default 5 per variant) are sent back to back immediately after it. There is no excluded warm-up: every cold request is itself a measured data point. Short and padded resend byte-identical bodies; busted rebuilds its body around a new nonce every time.</li>
+              <li><strong>The busted rows are the no-cache control.</strong> Their cold/warm split is meaningless by design - every request is a guaranteed miss - so expect ~0% cache hit, ~0% TTFT reduction, and ~0% cost savings there. The contrast between the padded and busted rows of the same model is the cleanest read of the cache effect: identical prompt content, one cacheable and one not.</li>
+              <li><strong>The padding is regenerated from a fresh seed per benchmark run</strong>, so re-running the test does not measure a cache warmed by the previous run. It is padding, not a cache-busting nonce - nothing random is injected into individual requests of the short or padded variants, and within a run every one of their requests sends the same bytes. A cold request can still hit an unrelated cache (for example shared provider infrastructure), so treat cold numbers as "first request", not a guaranteed miss.</li>
+              <li><strong>Request bytes are identical</strong> within a variant: the same body object is serialized for the cold request and every repeat, so nothing but the prefix cache can explain any difference between them.</li>
+              <li><strong>Cache hit % is server-reported</strong>, not inferred: warm runs divide the usage <code>prompt_tokens_details.cached_tokens</code> (or the endpoint's <code>cached_tokens</code> shorthand) by <code>prompt_tokens</code>. Endpoints that do not report the split show "-".</li>
+              <li><strong>TTFT reduction</strong> = (cold TTFT − warm TTFT p50) ÷ cold TTFT. TTFT runs from request dispatch to the first generated token, so it contains the prefill the cache is supposed to skip; with few runs, nearest-rank p90 is simply the slowest warm run.</li>
+              <li><strong>Cost</strong> per request = uncached prompt tokens × input price + cached tokens × cached-input price, from the model's catalog pricing. <strong>Cost savings</strong> compares the warm cost with the cold cost; models without cached pricing metadata bill the cached share at the full input price (fallback), so their savings read 0% until a cached price is added to the catalog.</li>
+              <li><strong>Warm accuracy</strong> grades each repeat's answer (it must mention Paris), confirming a cached prefill does not corrupt the reply.</li>
+              <li><strong>Prefix caching caveats apply:</strong> caches are strictly prefix-based, live for minutes (not forever), and many endpoints cache only prefixes above a minimum length. This test measures the happy path - one stable payload, immediate reuse - not partial-prefix overlap or TTL decay.</li>
+              <li><strong>Thinking is left at each model's default behavior</strong>; the test sends no <code>chat_template_kwargs</code>, matching the long-context tests, so reasoning models may spend reasoning tokens before the first visible token. TTFT counts the first generated token of any kind.</li>
+              <li><strong>Models run one at a time</strong> so each cold prefill is uncontended and TTFT stays comparable. Total run time is wall-clock time.</li>
+              <li class="methodology-request-item">
+                <details class="methodology-request">
+                  <summary>Benchmark request</summary>
+                  <p class="sample-request-note">Live request template based on the current settings; the selected model is inserted when the test runs, and the API key is always redacted. The identical body is sent for the cold request and every warm repeat.</p>
+                  <pre class="sample-request"><code id="cache-request-template-code"></code></pre>
+                </details>
+              </li>
+              <li class="methodology-sample-item">
+                <details class="sample-exchange">
+                  <summary>Sample request</summary>
+                  <p id="cache-sample-request-note" class="sample-request-note">Captured from a completed warm run. Long documents are truncated head + tail and the API key is redacted.</p>
+                  <pre class="sample-request"><code id="cache-sample-request-code"></code></pre>
+                </details>
+              </li>
+            </ul>
+            <div class="sample-exchanges">
+              <details class="sample-exchange">
+                <summary>Sample streaming response</summary>
+                <p id="cache-sample-response-note" class="sample-request-note">Raw response headers and every decoded network chunk from the same warm run, including the usage chunk that reports the cached-token split. Chunk labels are added by the benchmark.</p>
+                <pre class="sample-request"><code id="cache-sample-response-code"></code></pre>
+              </details>
+              <details class="sample-exchange">
+                <summary>Sample consolidated response</summary>
+                <p id="cache-sample-output-note" class="sample-request-note">All generated deltas from the same warm run, consolidated in arrival order, plus the grading verdict.</p>
+                <pre class="sample-request"><code id="cache-sample-output-code"></code></pre>
               </details>
             </div>
           </div>

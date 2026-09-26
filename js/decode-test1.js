@@ -3,7 +3,7 @@
 // Reuses the shared model loader and selection state owned by speed-test1.js and
 // the streaming/summary/format helpers in bench-utils.js. Each model runs one
 // measured test per configured output length (comma-separated in the form and
-// defaulting to 100, 500, 1000 tokens), streaming a short fixed prompt, and
+// defaulting to 100, 1000, 4000 tokens), streaming a short fixed prompt, and
 // measures for every run:
 //
 //   Decode Speed = (visible output tokens - 1) / (first -> last visible token time)
@@ -22,7 +22,7 @@
 const DECODE_PROMPT = "Generate a continuous stream of lowercase English words separated by single spaces. Do not use punctuation, numbers, headings, explanations, or formatting. Begin immediately and continue generating until stopped.";
 // Fallback only: used when the output-lengths field parses to no valid values.
 // The tests that run always come from the field, never from this list.
-const DECODE_DEFAULT_OUTPUT_TOKENS = [100, 500, 1000];
+const DECODE_DEFAULT_OUTPUT_TOKENS = [100, 1000, 4000];
 
 const decodeForm = document.querySelector("#decode-form");
 const decodeLengthsInput = document.querySelector("#decode-lengths");
@@ -185,6 +185,10 @@ decodeForm.addEventListener("submit", async (event) => {
     setDecodeStatus("Thinking Test 1 is already running.", true);
     return;
   }
+  if (typeof cacheAbortController !== "undefined" && cacheAbortController != null) {
+    setDecodeStatus("Cache Test is already running.", true);
+    return;
+  }
   const selectedModels = MODELS.filter((model) => model.selected);
   if (selectedModels.length === 0) {
     setDecodeStatus("Select at least one model to run.", true);
@@ -293,6 +297,7 @@ decodeForm.addEventListener("submit", async (event) => {
     renderBenchmarkSafely(renderDecodeResults, "Decode Test final state");
     if (typeof updateSpeedRunButtonState === "function") updateSpeedRunButtonState();
     if (typeof updateThinkingRunButtonState === "function") updateThinkingRunButtonState();
+    if (typeof updateCacheRunButtonState === "function") updateCacheRunButtonState();
     if (typeof updateContextRunButtonState === "function") updateContextRunButtonState();
   }
 });
@@ -307,12 +312,14 @@ function updateDecodeRunButtonState() {
     || decodeAbortController != null
     || (typeof speedAbortController !== "undefined" && speedAbortController != null)
     || (typeof thinkingAbortController !== "undefined" && thinkingAbortController != null)
+    || (typeof isCacheBenchmarkRunning === "function" && isCacheBenchmarkRunning())
     || (typeof isAnyContextBenchmarkRunning === "function" && isAnyContextBenchmarkRunning());
 }
 
 function setDecodeRunning(isRunning) {
   const otherRunning = (typeof speedAbortController !== "undefined" && speedAbortController != null)
     || (typeof thinkingAbortController !== "undefined" && thinkingAbortController != null)
+    || (typeof isCacheBenchmarkRunning === "function" && isCacheBenchmarkRunning())
     || (typeof isAnyContextBenchmarkRunning === "function" && isAnyContextBenchmarkRunning());
   decodeRunButton.disabled = isRunning
     || otherRunning
@@ -335,6 +342,13 @@ function setDecodeRunning(isRunning) {
   if (typeof thinkingRunButton !== "undefined") {
     thinkingRunButton.disabled = isRunning
       || thinkingAbortController != null
+      || !MODELS.some((model) => model.selected)
+      || modelsLoading;
+  }
+  // Cross-lock the Cache Test run button.
+  if (typeof cacheRunButton !== "undefined") {
+    cacheRunButton.disabled = isRunning
+      || (typeof cacheAbortController !== "undefined" && cacheAbortController != null)
       || !MODELS.some((model) => model.selected)
       || modelsLoading;
   }
@@ -571,18 +585,8 @@ function renderDecodeMatrix() {
   decodeMatrix.replaceChildren(table);
 }
 
-// Friendly chart labels: prefer the catalog name from the shared model
-// catalog loaded by speed-test1.js (e.g.
-// "Nemotron-3.5-Lightning" -> "Nemotron 3.5 Lightning"), falling back to the
-// model id without its vendor prefix. Tooltips still show the full model id.
-function shortModelLabel(modelId) {
-  const match = typeof MODELS !== "undefined"
-    ? MODELS.find((model) => model.modelId === modelId)
-    : null;
-  const source = match?.name || String(modelId).split("/").at(-1);
-  return String(source).replace(/[_-]+/g, " ").replace(/\s+/g, " ").trim();
-}
-
+// Friendly chart labels come from the shared shortModelLabel in
+// bench-utils.js: catalog name preferred, vendor prefix stripped otherwise.
 const DECODE_CHART_COLORS = [
   "#6c5ce7",
   "#00b894",

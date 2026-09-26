@@ -1045,20 +1045,6 @@ code {
   white-space: nowrap;
 }
 
-.thinking-table .sort-button {
-  position: relative;
-  min-height: 58px;
-  padding: 10px 25px 10px 12px;
-  gap: 5px;
-  font-size: 0.64rem;
-  line-height: 1.25;
-  white-space: normal;
-}
-
-.thinking-table .sort-button > span:first-child {
-  min-width: 0;
-}
-
 .thinking-table .sort-icon {
   position: absolute;
   top: 50%;
@@ -1244,19 +1230,6 @@ code {
 #results th[data-model-column="outputPrice"] { width: 8%; }
 #results th[data-model-column="blendedPrice"] { width: 9%; }
 
-#results .sort-button {
-  position: relative;
-  min-width: 0;
-  min-height: 52px;
-  gap: 5px;
-  padding: 10px 24px 10px 10px;
-  white-space: normal;
-}
-
-#results .sort-button > span:first-child {
-  min-width: 0;
-}
-
 #results .sort-icon {
   position: absolute;
   top: 50%;
@@ -1342,21 +1315,35 @@ th.sorted-column .sort-button {
 }
 
 .sort-button {
+  position: relative;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
+  gap: 5px;
+  min-width: 0;
+  min-height: 52px;
   width: 100%;
-  padding: 13px 16px;
+  padding: 10px 24px 10px 12px;
   border: 0;
   background: transparent;
   color: var(--muted-strong);
   cursor: pointer;
-  font-size: 0.68rem;
+  font-size: 0.64rem;
   font-weight: 800;
   letter-spacing: 0.08em;
+  line-height: 1.25;
   text-align: left;
   text-transform: uppercase;
+  white-space: normal;
+  text-wrap: balance;
+}
+
+/* Universal header-label wrapping: every benchmark table's column names wrap
+   onto multiple lines instead of stretching the column or overflowing. */
+.sort-button > span:first-child {
+  min-width: 0;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .sort-button:hover,
@@ -1813,20 +1800,6 @@ td:first-child {
   text-overflow: ellipsis;
 }
 
-.decode-table .sort-button {
-  position: relative;
-  min-height: 52px;
-  gap: 5px;
-  padding: 10px 24px 10px 12px;
-  font-size: 0.64rem;
-  line-height: 1.25;
-  white-space: normal;
-}
-
-.decode-table .sort-button > span:first-child {
-  min-width: 0;
-}
-
 .decode-table .sort-icon {
   position: absolute;
   top: 50%;
@@ -1899,6 +1872,88 @@ td:first-child {
   text-align: center;
 }
 
+/* Cache Test: little "!" marker on the cost-savings cell when the model has
+   no cached pricing in the catalog and the number comes from the input-price
+   fallback. */
+.cache-table .cache-price-fallback-indicator {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  margin-left: 6px;
+  color: var(--warning);
+  font-size: 0.82rem;
+  font-weight: 800;
+  line-height: 1;
+  vertical-align: middle;
+  cursor: help;
+}
+
+.cache-table .cache-price-fallback-indicator:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* Cache Test chart: one per model, cold vs warm TTFT bars per variant. */
+#cache-chart {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 440px), 1fr));
+  gap: 20px;
+  align-items: start;
+}
+
+/* Cap each chart so a lone one never stretches to full width. */
+#cache-chart .decode-line-chart {
+  max-width: 640px;
+}
+
+.cache-chart-title {
+  display: flex;
+  align-items: baseline;
+  gap: 14px;
+  margin: 2px 0 8px;
+}
+
+.cache-chart-model {
+  font-size: 0.82rem;
+  font-weight: 700;
+  color: var(--ink);
+  overflow-wrap: anywhere;
+}
+
+.cache-legend {
+  display: inline-flex;
+  gap: 12px;
+  margin-left: auto;
+}
+
+.cache-legend-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.72rem;
+  color: var(--muted);
+  font-weight: 600;
+}
+
+.cache-legend-chip {
+  width: 10px;
+  height: 10px;
+  border-radius: 3px;
+}
+
+.cache-legend-chip.cold { background: var(--muted); }
+.cache-legend-chip.warm { background: var(--accent); }
+
+.cache-bar-cold { fill: var(--muted); }
+.cache-bar-warm { fill: var(--accent); }
+
+.cache-bar-value {
+  font-size: 10px;
+  font-weight: 650;
+  fill: var(--muted);
+}
+
 .context-table {
   width: 100%;
   min-width: 1000px;
@@ -1927,20 +1982,6 @@ td:first-child {
 .context-table td[data-context-column="modelId"] {
   overflow-wrap: anywhere;
   white-space: normal;
-}
-
-.context-table .sort-button {
-  position: relative;
-  min-height: 52px;
-  gap: 5px;
-  padding: 10px 24px 10px 12px;
-  font-size: 0.64rem;
-  line-height: 1.25;
-  white-space: normal;
-}
-
-.context-table .sort-button > span:first-child {
-  min-width: 0;
 }
 
 .context-table .sort-icon {
@@ -2031,20 +2072,6 @@ td:first-child {
 }
 
 /* The matrix uses the same sortable-header pattern as the run table. */
-.context-matrix .sort-button {
-  position: relative;
-  min-height: 46px;
-  gap: 5px;
-  padding: 10px 24px 10px 12px;
-  font-size: 0.64rem;
-  line-height: 1.25;
-  white-space: normal;
-}
-
-.context-matrix .sort-button > span:first-child {
-  min-width: 0;
-}
-
 .context-matrix .sort-icon {
   position: absolute;
   top: 50%;
@@ -2173,21 +2200,8 @@ td:first-child {
   width: 40%;
 }
 
-/* The leaderboard uses the same sortable-header pattern as the run table. */
-.decode-matrix .sort-button {
-  position: relative;
-  min-height: 46px;
-  gap: 5px;
-  padding: 10px 24px 10px 12px;
-  font-size: 0.64rem;
-  line-height: 1.25;
-  white-space: normal;
-}
-
-.decode-matrix .sort-button > span:first-child {
-  min-width: 0;
-}
-
+/* The leaderboard header uses the universal .sort-button rules above; only
+   the icon placement is matrix-specific. */
 .decode-matrix .sort-icon {
   position: absolute;
   top: 50%;
@@ -2393,7 +2407,7 @@ td:first-child {
 }
 
 .confirm-dialog {
-  width: min(560px, 100%);
+  width: min(760px, 100%);
   max-height: min(640px, calc(100vh - 48px));
   overflow-y: auto;
   padding: 22px 24px 20px;
@@ -2418,26 +2432,54 @@ td:first-child {
   color: var(--ink-soft);
 }
 
-.confirm-rows {
-  list-style: none;
+.confirm-table {
+  width: 100%;
+  border-collapse: collapse;
   margin: 0 0 14px;
-  padding: 0;
-  display: grid;
-  gap: 8px;
+  table-layout: fixed;
 }
 
-.confirm-row {
-  display: grid;
-  grid-template-columns: minmax(110px, auto) 1fr auto;
-  gap: 4px 12px;
-  align-items: baseline;
+/* Fixed layout with bounded side columns: the middle (notes) column takes
+   the rest and every cell wraps instead of bleeding into its neighbor. */
+.confirm-table th:first-child,
+.confirm-table td:first-child {
+  width: 22%;
+}
+
+.confirm-table th:last-child,
+.confirm-table td:last-child {
+  width: 26%;
+}
+
+.confirm-table th {
+  padding: 6px 12px;
+  border-bottom: 1px solid var(--control-border-strong);
+  text-align: left;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.05em;
+  text-transform: uppercase;
+  color: var(--muted);
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+
+.confirm-table td {
   padding: 10px 12px;
-  border: 1px solid var(--line);
-  border-radius: 10px;
-  background: var(--surface-subtle);
+  border-bottom: 1px solid var(--line);
+  vertical-align: top;
+  /* Every column wraps, unconditionally: nothing can bleed into a
+     neighbor, whatever the content (long ids, long notes, cost strings). */
+  white-space: normal;
+  overflow-wrap: anywhere;
+  word-break: break-all;
 }
 
-.confirm-row-muted {
+.confirm-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+.confirm-row-muted td {
   opacity: 0.6;
 }
 
@@ -2445,7 +2487,6 @@ td:first-child {
   font-size: 0.85rem;
   font-weight: 700;
   color: var(--ink);
-  word-break: break-all;
 }
 
 .confirm-row-detail {
@@ -2458,7 +2499,6 @@ td:first-child {
   font-size: 0.8rem;
   color: var(--muted);
   font-variant-numeric: tabular-nums;
-  white-space: nowrap;
 }
 
 .confirm-totals {
@@ -2576,12 +2616,9 @@ td:first-child {
     padding: 12px;
   }
 
-  .confirm-row {
-    grid-template-columns: 1fr;
-  }
-
-  .confirm-row-meta {
-    white-space: normal;
+  .confirm-table th,
+  .confirm-table td {
+    padding: 6px 8px;
   }
 }
 

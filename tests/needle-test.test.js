@@ -757,11 +757,11 @@ test("Needle Test form defaults and configuration follow the bench conventions",
   assert.match(engineSource, /!\(combo\.inputTokens > 0\)/);
   assert.match(engineSource, /no advertised context window to size the document against/);
 
-  // Run confirmation: the Needle Test warns about the planned request and
-  // token volume (with estimated input cost) before sending anything, in a
-  // styled dialog; the Prefill Test runs without a confirmation.
+  // Run confirmation: both long-context tests warn about the planned request
+  // and token volume (with estimated input cost) before sending anything, in
+  // a styled dialog - the Prefill Test can send up to 1M-token requests.
   assert.match(needleSource, /confirmRun: true/);
-  assert.doesNotMatch(prefillSource, /confirmRun/);
+  assert.match(prefillSource, /confirmRun: true/);
   assert.match(engineSource, /confirmRun = false/);
   assert.match(benchSource, /function showBenchmarkConfirm\(/);
   assert.match(engineSource, /await showBenchmarkConfirm\(\{/);

@@ -22,7 +22,8 @@ Enter your endpoint URL and API key, load the available models, select the model
 - **Thinking Test 1** — accuracy and token cost with reasoning enabled vs disabled.
 - **Decode Test** — client-observed output generation speed at configured output lengths (p50/p90 per length).
 - **Needle Test** — long-context retrieval: a document sized at a fill percent of each model's context window (default 90%) hides one needle at each configured position (default 5%–90%), producing the "lost in the middle" accuracy matrix plus TTFT p50/p90 and effective input tok/s per position. Models run one at a time, and a styled confirmation dialog totals the planned requests, input tokens, and estimated input cost before anything is sent.
-- **Prefill Test** — long-prompt prefill speed: input sizes from 10K to 1M tokens with the needle pinned near the end (default 90%); the effective input rate shows how fast the endpoint digests each size.
+- **Prefill Test** — long-prompt prefill speed: input sizes from 10K to 1M tokens with the needle pinned near the end (default 90%); the effective input rate shows how fast the endpoint digests each size. A styled confirmation dialog totals the planned requests, input tokens, and estimated input cost before anything is sent.
+- **Cache Test** — prompt-cache effectiveness: one fixed trivia question ("What is the capital of France?") asked three ways — short (bare question, below the cacheable minimum), padded (question + filler to a configured size, default 50K tokens), and nonce-busted (the padded prompt with a fresh nonce on every request, the no-cache control). Per variant, one cold request primes the cache and repeats measure the server-reported cached-token split (cache hit %), the TTFT reduction, and the billed-cost drop at cached input pricing.
 
 ## Prerequisites
 

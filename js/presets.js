@@ -48,6 +48,7 @@ const TEST_REQUEST_DEFAULTS = {
   decode: { temperature: 0, disableThinking: true, fixedOutput: true },
   needle: { temperature: 0 },
   prefill: { temperature: 0 },
+  cache: { temperature: 0 },
 };
 
 // Per-provider overrides layered over TEST_REQUEST_DEFAULTS. Providers not
@@ -59,6 +60,7 @@ const PROVIDER_TEST_REQUEST_OVERRIDES = {
     decode: { temperature: null, disableThinking: false, fixedOutput: false },
     needle: { temperature: null },
     prefill: { temperature: null },
+    cache: { temperature: null },
   },
 };
 

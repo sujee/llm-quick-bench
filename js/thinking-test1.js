@@ -114,6 +114,9 @@ exportThinkingJsonButton.addEventListener("click", exportThinkingJson);
 });
 resetThinkingResults();
 document.addEventListener("models:selection-changed", updateThinkingRunButtonState);
+document.addEventListener("models:selection-changed", () => {
+  if (thinkingAbortController == null) renderThinkingResults();
+});
 renderThinkingMethodologySample();
 applyThinkingProviderDefaults(providerSelect.value);
 updateThinkingRunButtonState();
@@ -122,6 +125,10 @@ thinkingForm.addEventListener("submit", async (event) => {
   event.preventDefault();
   if (typeof speedAbortController !== "undefined" && speedAbortController != null) {
     setThinkingStatus("Speed Test 1 is already running.", true);
+    return;
+  }
+  if (typeof cacheAbortController !== "undefined" && cacheAbortController != null) {
+    setThinkingStatus("Cache Test is already running.", true);
     return;
   }
   const selectedModels = MODELS.filter((model) => model.selected);
@@ -218,6 +225,7 @@ function updateThinkingRunButtonState() {
     || (typeof speedAbortController !== "undefined" && speedAbortController != null)
     || thinkingAbortController != null
     || (typeof isDecodeBenchmarkRunning === "function" && isDecodeBenchmarkRunning())
+    || (typeof isCacheBenchmarkRunning === "function" && isCacheBenchmarkRunning())
     || (typeof isAnyContextBenchmarkRunning === "function" && isAnyContextBenchmarkRunning());
 }
 
@@ -245,6 +253,13 @@ function setThinkingRunning(isRunning) {
   if (typeof decodeRunButton !== "undefined") {
     decodeRunButton.disabled = isRunning
       || decodeAbortController != null
+      || !MODELS.some((model) => model.selected)
+      || modelsLoading;
+  }
+  // Cross-lock the Cache Test run button.
+  if (typeof cacheRunButton !== "undefined") {
+    cacheRunButton.disabled = isRunning
+      || (typeof cacheAbortController !== "undefined" && cacheAbortController != null)
       || !MODELS.some((model) => model.selected)
       || modelsLoading;
   }
@@ -514,41 +529,44 @@ function gradeThinkingAnswer(extracted, expected) {
 }
 
 function renderThinkingResults() {
-  if (!thinkingRun) return;
+  // Before a run, preview one Queued row per selected model (site-wide
+  // default behaviour) instead of an empty table.
+  const results = thinkingRun ? thinkingRun.results : previewBenchmarkResults();
   thinkingBody.replaceChildren();
   let hasEstimates = false;
   let hasUnpricedUsage = false;
 
-  const runUsage = summarizeRunUsage(thinkingRun.results);
-  const runAccuracy = summarizeRunThinkingAccuracy(thinkingRun.results);
-  const elapsedMs = thinkingRun.totalTestTimeMs
-    ?? (thinkingStartedAtMs === null ? null : performance.now() - thinkingStartedAtMs);
-
-  thinkingSummaryTime.textContent = formatDuration(elapsedMs);
-  const overallAccuracy = runAccuracy.total > 0
-    ? runAccuracy.correct / runAccuracy.total
-    : null;
-  thinkingSummaryAccuracy.textContent = formatRatioPercent(overallAccuracy);
-  thinkingSummaryTotalTokens.textContent = formatInteger(runUsage.totalTokens);
-  thinkingSummaryCost.textContent = runUsage.requestCount === 0
-    ? "-"
-    : runUsage.pricedUsageCount === 0
-      ? "Unpriced"
-      : `${formatCost(runUsage.cost)}${runUsage.hasUnpriced ? " + unpriced" : ""}`;
-  thinkingSummaryCost.title = runUsage.hasUnpriced
-    ? "Some selected models have no pricing metadata; their usage is excluded from this cost total."
-    : "Warm-up and measured questions are included.";
-  const aggregateCostPerCorrect = calculateAggregateCostPerCorrect(
-    runUsage,
-    runAccuracy.correct,
-  );
-  thinkingSummaryCostPerCorrect.textContent = formatCost(aggregateCostPerCorrect);
-  thinkingSummaryCostPerCorrect.title = runUsage.hasUnpriced
-    ? "Unavailable because at least one model has usage without pricing metadata."
-    : "Total benchmark cost divided by correct measured runs.";
+  const runUsage = thinkingRun ? summarizeRunUsage(results) : null;
+  const runAccuracy = summarizeRunThinkingAccuracy(results);
+  if (thinkingRun) {
+    const elapsedMs = thinkingRun.totalTestTimeMs
+      ?? (thinkingStartedAtMs === null ? null : performance.now() - thinkingStartedAtMs);
+    thinkingSummaryTime.textContent = formatDuration(elapsedMs);
+    const overallAccuracy = runAccuracy.total > 0
+      ? runAccuracy.correct / runAccuracy.total
+      : null;
+    thinkingSummaryAccuracy.textContent = formatRatioPercent(overallAccuracy);
+    thinkingSummaryTotalTokens.textContent = formatInteger(runUsage.totalTokens);
+    thinkingSummaryCost.textContent = runUsage.requestCount === 0
+      ? "-"
+      : runUsage.pricedUsageCount === 0
+        ? "Unpriced"
+        : `${formatCost(runUsage.cost)}${runUsage.hasUnpriced ? " + unpriced" : ""}`;
+    thinkingSummaryCost.title = runUsage.hasUnpriced
+      ? "Some selected models have no pricing metadata; their usage is excluded from this cost total."
+      : "Warm-up and measured questions are included.";
+    const aggregateCostPerCorrect = calculateAggregateCostPerCorrect(
+      runUsage,
+      runAccuracy.correct,
+    );
+    thinkingSummaryCostPerCorrect.textContent = formatCost(aggregateCostPerCorrect);
+    thinkingSummaryCostPerCorrect.title = runUsage.hasUnpriced
+      ? "Unavailable because at least one model has usage without pricing metadata."
+      : "Total benchmark cost divided by correct measured runs.";
+  }
 
   thinkingTable.updateHeaders();
-  const sortedResults = getSortedThinkingResults();
+  const sortedResults = getSortedThinkingResults(results);
 
   sortedResults.forEach((result) => {
     const summary = summarizeRuns(result.runs);
@@ -560,17 +578,18 @@ function renderThinkingResults() {
 
     const values = {
       modelId: result.modelId,
-      status: formatBenchmarkResultStatus(result, thinkingRun.config.runs),
+      status: formatBenchmarkResultStatus(result, thinkingRun?.config.runs ?? 0),
       accuracy,
       ttftMedian: formatMilliseconds(summary.ttftMedian),
       ttftP95: formatMilliseconds(summary.ttftP95),
       e2eMedian: formatMilliseconds(summary.e2eMedian),
       e2eP95: formatMilliseconds(summary.e2eP95),
-      reasoningTokensMedian: formatInteger(
-        percentile(result.runs.map((run) => run.reasoningTokens), 0.5) ?? 0,
+      // "-" before any run exists; 0 would be a fake measurement.
+      reasoningTokensMedian: formatOptionalInteger(
+        percentile(result.runs.map((run) => run.reasoningTokens), 0.5),
       ),
-      answerTokensMedian: formatInteger(
-        percentile(result.runs.map((run) => run.answerTokens), 0.5) ?? 0,
+      answerTokensMedian: formatOptionalInteger(
+        percentile(result.runs.map((run) => run.answerTokens), 0.5),
       ),
       costPerCorrect: formatCost(costPerCorrect),
       totalTokens: usage.requestCount === 0
@@ -636,6 +655,7 @@ function resetThinkingResults() {
   exportThinkingJsonButton.disabled = true;
   thinkingResults.hidden = false;
   thinkingTable.updateHeaders();
+  renderThinkingResults();
 }
 
 function getThinkingSortValue(result, key) {
@@ -784,8 +804,8 @@ function exportThinkingJson() {
   });
 }
 
-function getSortedThinkingResults() {
-  return thinkingTable.sortRows(thinkingRun.results, getThinkingSortValue);
+function getSortedThinkingResults(results) {
+  return thinkingTable.sortRows(results ?? thinkingRun.results, getThinkingSortValue);
 }
 
 function getThinkingTotalValue(key) {

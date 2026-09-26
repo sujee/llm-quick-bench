@@ -273,6 +273,10 @@ function createContextBenchmark({
       setStatus(`${logName}: Decode Test is already running.`, true);
       return;
     }
+    if (typeof isCacheBenchmarkRunning === "function" && isCacheBenchmarkRunning()) {
+      setStatus(`${logName}: Cache Test is already running.`, true);
+      return;
+    }
     if (contextBenchmarks.some((benchmark) => benchmark.key !== key && benchmark.isRunning())) {
       setStatus(`${logName}: the other long-context test is already running.`, true);
       return;
@@ -377,6 +381,7 @@ function createContextBenchmark({
       if (typeof updateSpeedRunButtonState === "function") updateSpeedRunButtonState();
       if (typeof updateThinkingRunButtonState === "function") updateThinkingRunButtonState();
       if (typeof updateDecodeRunButtonState === "function") updateDecodeRunButtonState();
+      if (typeof updateCacheRunButtonState === "function") updateCacheRunButtonState();
     }
   });
 
@@ -391,6 +396,7 @@ function createContextBenchmark({
       || (typeof speedAbortController !== "undefined" && speedAbortController != null)
       || (typeof thinkingAbortController !== "undefined" && thinkingAbortController != null)
       || (typeof decodeAbortController !== "undefined" && decodeAbortController != null)
+      || (typeof isCacheBenchmarkRunning === "function" && isCacheBenchmarkRunning())
       || contextBenchmarks.some((benchmark) => benchmark.key !== key && benchmark.isRunning());
   }
 
@@ -428,6 +434,13 @@ function createContextBenchmark({
     if (typeof decodeRunButton !== "undefined") {
       decodeRunButton.disabled = isActive
         || decodeAbortController != null
+        || !MODELS.some((model) => model.selected)
+        || modelsLoading;
+    }
+    // Cross-lock the Cache Test run button.
+    if (typeof cacheRunButton !== "undefined") {
+      cacheRunButton.disabled = isActive
+        || (typeof cacheAbortController !== "undefined" && cacheAbortController != null)
         || !MODELS.some((model) => model.selected)
         || modelsLoading;
     }
@@ -482,14 +495,16 @@ function createContextBenchmark({
       rows: plans.map((plan) => {
         if (plan.requests === 0) {
           return {
-            label: plan.modelId,
-            detail: "0 requests - no context-window metadata to size the document against",
+            label: shortModelLabel(plan.modelId),
+            title: plan.modelId,
+            detail: "0 requests - no runnable input sizes (no window metadata, or every configured size exceeds the model's context window)",
             meta: "skipped",
             muted: true,
           };
         }
         return {
-          label: plan.modelId,
+          label: shortModelLabel(plan.modelId),
+          title: plan.modelId,
           detail: `${plan.requests} requests · about ${formatInteger(plan.inputTokens)} input tokens`,
           meta: plan.cost != null ? `input cost about ${formatCost(plan.cost)}` : "pricing unknown",
           muted: false,
