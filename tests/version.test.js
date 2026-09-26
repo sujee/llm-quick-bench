@@ -36,6 +36,13 @@ test("GitHub badge is local and does not depend on Shields", () => {
   assert.match(badge, /aria-label="GitHub"/);
 });
 
+test("GitHub badge links to the llm-quick-bench repository", () => {
+  const html = fs.readFileSync(path.join(projectRoot, "index.html"), "utf8");
+
+  assert.match(html, /class="github-badge-link" href="https:\/\/github\.com\/sujee\/llm-quick-bench" target="_blank" rel="noopener"/);
+  assert.doesNotMatch(html, /practical-llm-evals/);
+});
+
 test("header credits sujee.dev with a secure external link", () => {
   const html = fs.readFileSync(path.join(projectRoot, "index.html"), "utf8");
 
